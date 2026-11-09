@@ -247,6 +247,15 @@ input[type=time]{min-width:0;width:100%}
 .placa-mercosul-edicao input::placeholder{color:#777;opacity:.65}
 
 </style>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0E6B44">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Fretes Joinville">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" href="./icons/icon-192.png" type="image/png">
+<link rel="stylesheet" href="./app.css">
 </head>
 <body>
 <header class="topo">
@@ -256,7 +265,8 @@ input[type=time]{min-width:0;width:100%}
       Fretes Joinville
     </a>
     <div class="acoes" style="margin-left:auto"><button class="btn btn-linha btn-sm" data-act="tema" id="tema-btn">Claro / escuro</button><button class="btn btn-linha btn-sm" data-act="tela" id="tela-btn">Tela cheia</button></div>
-    <nav class="nav" aria-label="Principal">
+    <button type="button" id="app-menu" class="btn btn-linha btn-sm" aria-expanded="false" aria-label="Abrir menu">☰ Menu</button><button type="button" id="app-instalar" class="btn btn-faixa btn-sm">Instalar app</button>
+    <nav id="app-navegacao" class="nav" aria-label="Principal">
       <a href="#inicio" data-nav="inicio">Início</a>
       <a href="#pedir" data-nav="pedir">Pedir frete</a>
       <a href="#pedidos" data-nav="pedidos" hidden>Meus pedidos</a>
@@ -267,7 +277,7 @@ input[type=time]{min-width:0;width:100%}
 </header>
 
 <div id="barra-atualizar"><button class="btn btn-faixa btn-sm" data-act="atualizar">Há novas informações. Atualizar tela</button></div>
-<main id="app"><div class="carregando">Carregando a plataforma…</div></main>
+<div id="app-conexao" class="nota app-conexao" role="status" hidden>Sem conexão. Os dados deste aparelho continuam disponíveis; mapas, cálculo de rotas e serviços externos precisam de internet.</div><div id="app-atualizacao" class="nota app-conexao" hidden>Nova versão disponível. <button type="button" class="btn btn-sm" id="app-atualizar">Atualizar app</button></div><main id="app"><div class="carregando">Carregando a plataforma…</div></main>
 
 <footer class="rodape">
   <div class="wrap">
@@ -1746,5 +1756,8 @@ render(true);
 Store.ready = Store.init().then(()=>render(true)).catch(()=>render(true));
 })();
 </script>
+<nav id="app-barra" aria-label="Navegação do aplicativo"></nav>
+<dialog id="app-instalacao"><div class="dlg-corpo"><h2>Instalar Fretes Joinville</h2><div id="app-instrucoes"></div><button type="button" class="btn" id="app-fechar-instalacao">Entendi</button></div></dialog>
+<script src="./app.js" defer></script><script src="./backup.js" defer></script>
 </body>
 </html>

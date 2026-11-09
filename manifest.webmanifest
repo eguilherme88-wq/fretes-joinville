@@ -1,0 +1,42 @@
+{
+  "id": "./",
+  "name": "Fretes Joinville",
+  "short_name": "Fretes JV",
+  "description": "Orçamentos de frete e área de clientes e motoristas.",
+  "lang": "pt-BR",
+  "start_url": "./index.html#inicio",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F3F5F2",
+  "theme_color": "#0E6B44",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Pedir frete",
+      "url": "./index.html#pedir"
+    },
+    {
+      "name": "Área do motorista",
+      "url": "./index.html#motorista"
+    }
+  ]
+}
