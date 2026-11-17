@@ -3,3 +3,7 @@
 @media(max-width:420px){#app-instalar{flex-basis:auto}.topo .marca{flex:1}.topo .acoes{order:3}#app-instalar{order:4;margin-left:auto}.dados{grid-template-columns:1fr}h1{font-size:2.2rem}}
 @media(display-mode:standalone){#app-instalar,#tela-btn{display:none!important}.topo{padding-top:env(safe-area-inset-top)}}
 @media print{#app-barra,#app-instalar,#app-menu,.app-conexao,.app-backup{display:none!important}body{padding-bottom:0!important}}
+
+.app-perfil-ferramentas{padding-top:18px}.app-perfil-ferramentas>.painel{display:flex;align-items:center;justify-content:space-between;gap:16px}.app-perfil-ferramentas+.wrap.pagina{padding-top:20px}
+@media(max-width:760px){.app-perfil-ferramentas>.painel{align-items:stretch;flex-direction:column}.app-perfil-ferramentas .acoes{display:grid;grid-template-columns:1fr;width:100%}.app-perfil-ferramentas .btn{width:100%}}
+@media print{.app-perfil-ferramentas{display:none!important}}

@@ -1,6 +1,6 @@
 'use strict';
 const PREFIXO='fretes-jv-'+new URL(self.registration.scope).pathname.replace(/[^a-z0-9]/gi,'_')+'-';
-const CACHE=PREFIXO+'app-v1';
+const CACHE=PREFIXO+'app-v2-perfis';
 const ARQUIVOS=['./','./index.html','./app.css','./app.js','./backup.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-maskable-512.png','./icons/apple-touch-icon.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ARQUIVOS))));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith(PREFIXO)&&key!==CACHE)await caches.delete(key);await self.clients.claim();})()));
