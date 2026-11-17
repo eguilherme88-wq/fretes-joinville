@@ -4,6 +4,6 @@
 @media(display-mode:standalone){#app-instalar,#tela-btn{display:none!important}.topo{padding-top:env(safe-area-inset-top)}}
 @media print{#app-barra,#app-instalar,#app-menu,.app-conexao,.app-backup{display:none!important}body{padding-bottom:0!important}}
 
-.app-perfil-ferramentas{padding-top:18px}.app-perfil-ferramentas>.painel{display:flex;align-items:center;justify-content:space-between;gap:16px}.app-perfil-ferramentas+.wrap.pagina{padding-top:20px}
-@media(max-width:760px){.app-perfil-ferramentas>.painel{align-items:stretch;flex-direction:column}.app-perfil-ferramentas .acoes{display:grid;grid-template-columns:1fr;width:100%}.app-perfil-ferramentas .btn{width:100%}}
-@media print{.app-perfil-ferramentas{display:none!important}}
+ .app-perfil-ferramentas{padding-top:12px;padding-bottom:0}.app-perfil-ferramentas+.wrap.pagina{padding-top:20px}
+.app-tema-compacto{width:38px;min-width:38px;height:38px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:1.3rem!important;line-height:1}
+@media print{.app-perfil-ferramentas,.app-tema-compacto{display:none!important}}

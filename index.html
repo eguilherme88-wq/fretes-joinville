@@ -255,7 +255,7 @@ input[type=time]{min-width:0;width:100%}
 <meta name="apple-mobile-web-app-title" content="Fretes Joinville">
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <link rel="icon" href="./icons/icon-192.png" type="image/png">
-<link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./app.css?v=4">
 </head>
 <body>
 <header class="topo">
@@ -1754,7 +1754,15 @@ function resumoMensalidadesIndicadores(agora=Date.now()){
 /* Entrada e instalação dentro de cada perfil; não restaura sessão ou senha. */
 function rotaPerfilSalvo(){const tipo=lsGet('fj-app-perfil');return ({administrador:'admin',motorista:'motorista',cliente:'pedidos'})[tipo]||'acesso';}
 function perfilAutenticadoAtual(){if(VIEW.nome==='admin'&&adminAutorizado&&Store.admin)return 'administrador';if(VIEW.nome==='motorista'&&motoristaLogado())return 'motorista';if(['pedidos','pedir'].includes(VIEW.nome)&&clienteAtual())return 'cliente';return null;}
-function aplicarFerramentasPerfil(){const tipo=perfilAutenticadoAtual();document.documentElement.dataset.theme=tipo?(lsGet('fj-tema')||'light'):'light';if(!tipo)return;const nome=tipo==='administrador'?'administrador':tipo==='motorista'?'motorista':'cliente';$('#app').insertAdjacentHTML('afterbegin',`<section class="wrap app-perfil-ferramentas" aria-label="Ferramentas do perfil do ${nome}"><div class="painel"><div><b>Perfil do ${nome}</b><p class="small muted" style="margin:3px 0 0">App para computador, celular e tablet</p></div><div class="acoes"><button type="button" class="btn btn-faixa" data-act="instalar-perfil" data-perfil="${tipo}">Instalar app neste aparelho</button><span class="pill pill-ok" data-app-instalado hidden>App instalado neste aparelho</span><button type="button" class="btn btn-linha" data-act="tema" id="tema-btn">Claro / escuro</button></div></div></section>`);window.dispatchEvent(new CustomEvent('fretes:perfil-renderizado'));}
+function aplicarFerramentasPerfil(){
+ const tipo=perfilAutenticadoAtual();
+ document.documentElement.dataset.theme=tipo?(lsGet('fj-tema')||'light'):'light';
+ document.querySelector('#tema-btn')?.remove();
+ if(!tipo)return;
+ document.querySelector('.topo .acoes')?.insertAdjacentHTML('afterbegin','<button type="button" class="btn btn-linha btn-sm app-tema-compacto" data-act="tema" id="tema-btn" title="Alternar tema claro e escuro" aria-label="Alternar tema claro e escuro">◐</button>');
+ $('#app').insertAdjacentHTML('afterbegin',`<section class="wrap app-perfil-ferramentas" aria-label="Instalação do aplicativo"><button type="button" class="btn btn-linha btn-sm" data-act="instalar-perfil" data-perfil="${tipo}">Instalar app neste aparelho</button></section>`);
+ window.dispatchEvent(new CustomEvent('fretes:perfil-renderizado'));
+}
 VIEWS.acesso=()=>`<section class="wrap pagina"><div class="pagina-topo"><h1>Entrar no Fretes Joinville</h1><p>Escolha seu perfil e entre com sua senha individual.</p></div><div class="grade g3"><a class="painel btn btn-linha" href="#pedidos">Sou cliente</a><a class="painel btn btn-linha" href="#motorista">Sou motorista</a><a class="painel btn btn-linha" href="#admin">Administrador</a></div><p style="margin-top:22px"><a href="#inicio">Visitar a página inicial</a></p></section>`;
 TITULOS.acesso='Entrar no aplicativo';
 if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone===true)&&['','#inicio','#entrar'].includes(location.hash))location.hash='entrar';
@@ -1769,6 +1777,27 @@ Store.ready = Store.init().then(()=>render(true)).catch(()=>render(true));
 </script>
 <nav id="app-barra" aria-label="Navegação do aplicativo"></nav>
 <dialog id="app-instalacao"><div class="dlg-corpo"><h2>Instalar Fretes Joinville</h2><div id="app-instrucoes"></div><button type="button" class="btn" id="app-fechar-instalacao">Entendi</button></div></dialog>
-<script src="./app.js" defer></script><script src="./backup.js" defer></script>
+<script>
+/* Instalação independente dos arquivos externos em cache. */
+(()=>{'use strict';let promptInstalacao=null;const $=s=>document.querySelector(s);
+let instaladoConfirmado=false;
+try{instaladoConfirmado=localStorage.getItem('fj-app-instalado')==='1';}catch(err){}
+function marcarInstalado(){instaladoConfirmado=true;try{localStorage.setItem('fj-app-instalado','1');}catch(err){}}
+function instalada(){const janela=matchMedia('(display-mode:standalone)').matches||navigator.standalone===true;if(janela)marcarInstalado();return janela||instaladoConfirmado;}
+function atualizarInstaladores(){const pronto=instalada();document.querySelectorAll('[data-act="instalar-perfil"]').forEach(b=>b.hidden=pronto);document.querySelectorAll('.app-perfil-ferramentas').forEach(el=>el.hidden=pronto);}
+window.addEventListener('fretes:perfil-renderizado',atualizarInstaladores);new MutationObserver(atualizarInstaladores).observe($('#app'),{childList:true});atualizarInstaladores();
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();promptInstalacao=e;instaladoConfirmado=false;try{localStorage.removeItem('fj-app-instalado');}catch(err){}atualizarInstaladores();});window.addEventListener('appinstalled',()=>{promptInstalacao=null;marcarInstalado();atualizarInstaladores();});
+const modo=matchMedia('(display-mode:standalone)');modo.addEventListener?.('change',atualizarInstaladores);
+document.addEventListener('click',async e=>{const botao=e.target.closest('[data-act="instalar-perfil"]');if(!botao)return;e.preventDefault();if(!document.querySelector('.app-perfil-ferramentas')||!['cliente','motorista','administrador'].includes(botao.dataset.perfil))return;try{localStorage.setItem('fj-app-perfil',botao.dataset.perfil);}catch(err){}
+ if(promptInstalacao){const evento=promptInstalacao;promptInstalacao=null;try{await evento.prompt();const escolha=await evento.userChoice;if(escolha.outcome==='accepted'){marcarInstalado();atualizarInstaladores();}return;}catch(err){console.warn('O navegador não abriu o aviso de instalação. Exibindo instruções.');}}
+ const seguro=location.protocol==='https:'||['localhost','127.0.0.1'].includes(location.hostname);const ua=navigator.userAgent;const ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);const android=/Android/.test(ua);const pc=/Windows|Linux|CrOS/.test(ua)&&!android;
+ $('#app-instrucoes').innerHTML=!seguro?'<p>Abra o endereço HTTPS publicado do Fretes Joinville para instalar. Arquivos abertos diretamente da pasta de downloads não podem ser instalados como app.</p>':instalada()?'<p>O Fretes Joinville já está aberto como aplicativo neste aparelho.</p>':ios?'<p>No iPhone ou iPad, abra este endereço no Safari, toque em <b>Compartilhar</b> e escolha <b>Adicionar à Tela de Início</b>. Depois, abra pelo ícone do Fretes Joinville.</p>':pc?'<p>No computador Windows ou Linux, abra o Fretes Joinville no <b>Google Chrome</b> ou em outro navegador compatível com instalação de apps. Procure o ícone de instalação na barra de endereço ou a opção <b>Instalar Fretes Joinville</b> no menu. O app abrirá em uma janela própria.</p>':'<p>No celular ou tablet Android, abra no <b>Google Chrome</b>. No menu <b>⋮</b>, procure <b>Instalar aplicativo</b> ou <b>Adicionar à tela inicial</b>. A opção depende do suporte do navegador.</p>';
+ $('#app-instrucoes').insertAdjacentHTML('beforeend','<p class="small muted">Ao abrir o app, entre com a senha do seu perfil. O app lembra o último perfil usado neste aparelho, sem guardar uma sessão administrativa.</p>');const dialogo=$('#app-instalacao');if(typeof dialogo.showModal==='function'){if(!dialogo.open)dialogo.showModal();}else{dialogo.setAttribute('open','');dialogo.scrollIntoView({block:'center'});}});
+$('#app-fechar-instalacao').addEventListener('click',()=>($('#app-instalacao').close?$('#app-instalacao').close():$('#app-instalacao').removeAttribute('open')));
+
+
+})();
+</script>
+<script src="./app.js?v=4" defer></script><script src="./backup.js" defer></script>
 </body>
 </html>
