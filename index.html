@@ -1090,17 +1090,19 @@ function adminIndicadores(){
 function adminMotoristas(){
   const mots=Store.lista('motoristas').sort((a,b)=>({pendente:0,aprovado:1,suspenso:2,recusado:3}[a.status]-({pendente:0,aprovado:1,suspenso:2,recusado:3}[b.status]))||b.criadoEm-a.criadoEm);
   if(!mots.length) return `<div class="painel vazio"><strong>Nenhum motorista cadastrado</strong>Divulgue o cadastro gratuito para autônomos e pequenas transportadoras da região.</div>`;
-  return `<div class="tabela-wrap"><table><thead><tr><th>Motorista</th><th>Veículo</th><th>Atende</th><th>Documentos</th><th>Aceite do contrato</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+  const vis=mots.filter(passaFiltroMot).length;
+  return `${barraFiltroMot(mots.length,vis)}<div class="tabela-wrap"><table><thead><tr><th>Motorista</th><th>Veículo</th><th>Atende</th><th>Documentos</th><th>Aceite do contrato</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+  <tr id="mot-sem-resultado" ${vis?'hidden':''}><td colspan="7" class="vazio">Nenhum motorista encontrado com estes filtros.</td></tr>
   ${mots.map(m=>{ const r=reputacao(m.id); const d=m.docs||{};
     const btn=(s,t,cls)=>`<button class="btn btn-sm ${cls||''}" data-act="mot-status" data-id="${esc(m.id)}" data-status="${s}">${t}</button>`;
     const acoes = m.status==='pendente'? btn('aprovado','Aprovar')+' '+btn('recusado','Recusar','btn-perigo')
       : m.status==='aprovado'? btn('suspenso','Suspender','btn-perigo') : btn('aprovado','Reativar','btn-linha');
-    return `<tr><td><b>${esc(m.nome)}</b><br><span class="small">${esc(m.tipoPessoa==='pj'?'CNPJ':'CPF')} ${esc(m.documento)}</span><br><span class="small">${esc(fone(m.tel))}</span><br><span class="small">${repTexto(r)}</span></td>
-    <td>${m.recuperacaoSolicitadaEm?'<span class="pill pill-aviso">Solicitou recuperação</span><br><button class="btn btn-linha btn-sm" data-act="senha-legado" data-id="'+esc(m.id)+'">Redefinir senha</button><br>':''}${!m.credencial?`<button class="btn btn-linha btn-sm" data-act="senha-legado" data-id="${esc(m.id)}">Definir senha de acesso</button>`:''}${esc(VEICULOS[m.veiculo]||'')}<br>${placaMercosul(m.placa)}<br><span class="small muted">${esc(m.capacidade)} kg</span><form id="form-tarifa" data-id="${esc(m.id)}" class="acoes"><label>R$/km<input aria-label="Tarifa por km" type="number" name="valorKm" required min="0.01" step="0.01" value="${esc(m.valorKm||'')}"></label><button class="btn btn-sm">Salvar</button></form></td>
+    return `<tr data-mot-linha="${esc(m.id)}" ${passaFiltroMot(m)?'':'hidden'}><td><b>${esc(m.nome)}</b><br><span class="small">${esc(m.tipoPessoa==='pj'?'CNPJ':'CPF')} ${esc(m.documento)}</span><br><span class="small">${esc(fone(m.tel))}</span><br><span class="small">${repTexto(r)}</span></td>
+    <td>${m.recuperacaoSolicitadaEm?'<span class="pill pill-aviso">Solicitou recuperação</span><br>':''}${!m.credencial?'<span class="pill pill-aviso">Sem senha de acesso</span><br>':''}${esc(VEICULOS[m.veiculo]||'')}<br>${placaMercosul(m.placa)}<br><span class="small muted">${esc(m.capacidade)} kg</span><form id="form-tarifa" data-id="${esc(m.id)}" class="acoes"><label>R$/km<input aria-label="Tarifa por km" type="number" name="valorKm" required min="0.01" step="0.01" value="${esc(m.valorKm||'')}"></label><button class="btn btn-sm">Salvar</button></form></td>
     <td class="small">${esc((m.cidades||[]).join(', '))}<br><span class="muted">${esc((m.categorias||[]).map(c=>CATEGORIAS[c]).join('; '))}</span></td>
     <td class="small">${['cnh','crlv','rntrc'].map(k=>`${d[k]?'✓':'✗'} ${k.toUpperCase()}`).join('<br>')}${m.docsConferidosEm?`<br><span class="pill pill-ok">Conferidos ${dataBR(m.docsConferidosEm)}</span>`:''}</td>
     <td>${registroAceiteHtml(m)}</td><td>${pillMot(m.status)}<br><span class="small muted">desde ${dataBR(m.criadoEm)}</span></td>
-    <td><div class="acoes">${acoes}<button type="button" class="btn btn-linha btn-sm" data-act="ver-fotos-motorista" data-id="${esc(m.id)}">Fotos (${quantidadeFotosMotorista(m)}/4)</button></div></td></tr>`; }).join('')}
+    <td><div class="acoes">${acoes}<button type="button" class="btn btn-linha btn-sm" data-act="ver-fotos-motorista" data-id="${esc(m.id)}">Fotos (${quantidadeFotosMotorista(m)}/4)</button><button type="button" class="btn btn-linha btn-sm" data-act="senha-legado" data-id="${esc(m.id)}">Redefinir senha</button></div></td></tr>`; }).join('')}
   </tbody></table></div>
   <p class="small muted">Aprove apenas após conferir documento pessoal, CNH, CRLV e, quando aplicável, RNTRC.</p>`;
 }
@@ -1462,7 +1464,7 @@ document.addEventListener('click', e=>{
 });
 document.addEventListener('submit', e=>{ const f=e.target; if(FORMS[f.id]){ e.preventDefault(); if(f.id==='form-config' && !adminAutorizado)return toast('Acesso restrito.',true); FORMS[f.id](f); } });
 document.addEventListener('input', e=>{
-  const f=e.target.closest('#app form'); if(f && f.id!=='form-placa') f.dataset.sujo='1';
+  const f=e.target.closest('#app form'); if(f && !['form-placa','filtro-motoristas'].includes(f.id)) f.dataset.sujo='1';
   if(e.target.closest('#form-pedido') && ['origemCidade','destinoCidade','origemBairro','destinoBairro'].includes(e.target.name)){++rotaSeq;rotaPedido=null;ofertasRota();}
   if(e.target.name==='peso' && e.target.closest('#form-pedido')) ofertasRota();
   if(e.target.name==='valor' && e.target.closest('#form-proposta')){
@@ -1508,7 +1510,7 @@ function solicitacoesMotorista(m){const pendentes=Store.lista('pedidos').filter(
 FORMS['form-conta']=async f=>{const d=new FormData(f),mot=f.dataset.tipo==='motorista',cad=f.dataset.cadastro==='1',col=mot?'motoristas':'clientes',tel=dig(d.get('tel')),senha=d.get('senha');const btn=$('button[type=submit]',f);if(tel.length<10||senha.length<8)return toast('Informe telefone com DDD e senha de ao menos 8 caracteres.',true);btn.disabled=true;try{let conta=Store.lista(col).find(x=>dig(x.tel)===tel);if(cad){if(conta)return toast('Este telefone já possui cadastro. Faça login.',true);if(d.get('confirmacao')!==senha)return toast('As senhas não coincidem.',true);if(!(d.get('nome')||'').trim())return toast('Informe seu nome.',true);conta={id:uid('cli'),nome:d.get('nome').trim(),email:(d.get('email')||'').trim(),tel,credencial:await criarCredencial(senha),criadoEm:Date.now()};await Store.put(col,conta);}else if(!conta||!await conferirSenha(senha,conta.credencial))return toast('Telefone ou senha inválidos. Cadastros antigos de motorista precisam de senha definida pelo administrador.',true);if(mot){adminAutorizado=false;sessaoCliente=null;lsSet('fj-app-perfil','motorista');sessaoMotorista=conta.id;UI.motAba='disponiveis';location.hash='motorista';}else{adminAutorizado=false;sessaoMotorista=null;lsSet('fj-app-perfil','cliente');sessaoCliente=conta.id;lsSet('fj-tel',tel);lsSet('fj-cliente',JSON.stringify({nome:conta.nome,tel,email:conta.email||''}));location.hash='pedidos';}render(true);}catch(e){toast('Não foi possível acessar a conta. Tente novamente.',true);}finally{btn.disabled=false;}};
 FORMS['form-agenda']=async f=>{const m=motoristaLogado();if(!m)return;try{const d=new FormData(f),agenda=lerAgenda(d);await Store.put('motoristas',{...m,agenda,disponivel:!!d.get('disponivel'),disponibilidade:textoAgenda(agenda)});toast('Disponibilidade atualizada.');render(true);}catch(e){toast(e.message,true);}};
 ACOES['responder-frete']=async el=>{const m=motoristaLogado(),original=Store.get('pedidos',el.dataset.id);if(!m||m.status!=='aprovado'||!original||original.motoristaId!==m.id||original.status!=='aguardando')return toast('Solicitação indisponível.',true);el.disabled=true;try{const p=JSON.parse(JSON.stringify(original)),pr=Store.get('propostas',p.propostaAceita);if(el.dataset.resposta==='aceitar'){mudarStatus(p,'confirmado');p.aceiteMotoristaEm=Date.now();}else{p.recusasMotoristas=[...(p.recusasMotoristas||[]),{motoristaId:m.id,em:Date.now()}];mudarStatus(p,'aberto');delete p.motoristaId;delete p.propostaAceita;delete p.valor;delete p.valorKm;}await Store.put('pedidos',p);if(pr)await Store.put('propostas',{...pr,status:el.dataset.resposta==='aceitar'?'aceita':'recusada'});if(el.dataset.resposta==='aceitar')for(const outra of propostasDo(p.id)){if(outra.id!==pr?.id&&outra.status!=='recusada')await Store.put('propostas',{...outra,status:'recusada'});}toast(el.dataset.resposta==='aceitar'?'Frete aceito. Veja em Meus fretes.':'Frete recusado. O cliente poderá escolher outro motorista.');render(true);}catch(e){el.disabled=false;}};
-ACOES['senha-legado']=el=>{if(!adminAutorizado)return;abrirDialogo(`<h2>Definir senha do motorista</h2><p>Use uma senha individual para este motorista. Informe a senha a ele por um canal de sua confiança.</p><form id="form-senha-legado" data-id="${esc(el.dataset.id)}" class="grade"><label class="campo"><span>Nova senha</span><input type="password" name="senha" required minlength="8" autocomplete="new-password"></label><label class="campo"><span>Confirme a senha</span><input type="password" name="confirmacao" required minlength="8" autocomplete="new-password"></label><button class="btn">Salvar senha</button></form>`);};
+ACOES['senha-legado']=el=>{if(!adminAutorizado)return;abrirDialogo(`<h2>Redefinir senha do motorista</h2><p>A senha atual deixa de funcionar. Use uma senha individual para este motorista. Informe a senha a ele por um canal de sua confiança.</p><form id="form-senha-legado" data-id="${esc(el.dataset.id)}" class="grade"><label class="campo"><span>Nova senha</span><input type="password" name="senha" required minlength="8" autocomplete="new-password"></label><label class="campo"><span>Confirme a senha</span><input type="password" name="confirmacao" required minlength="8" autocomplete="new-password"></label><button class="btn">Salvar senha</button></form>`);};
 FORMS['form-senha-legado']=async f=>{if(!adminAutorizado)return;const m=Store.get('motoristas',f.dataset.id),d=new FormData(f);if(!m||d.get('senha').length<8||d.get('senha')!==d.get('confirmacao'))return toast('Confira a senha e a confirmação.',true);const novo={...m,credencial:await criarCredencial(d.get('senha')),senhaAlteradaEm:Date.now()};delete novo.recuperacao;delete novo.recuperacaoSolicitadaEm;await Store.put('motoristas',novo);fecharDialogo();toast('Senha definida. O motorista já pode entrar.');render(true);};
 // Revalidar a seleção antes de enviar qualquer solicitação.
 const enviarPedidoOriginal=FORMS['form-pedido'];FORMS['form-pedido']=async f=>{if(!clienteAtual())return toast('Entre na sua conta de cliente.',true);return enviarPedidoOriginal(f);};
@@ -1830,6 +1832,49 @@ function aplicarFerramentasPerfil(){
 VIEWS.acesso=()=>`<section class="wrap pagina"><div class="pagina-topo"><h1>Entrar no Fretes Joinville</h1><p>Escolha seu perfil e entre com sua senha individual.</p></div><div class="grade g3"><a class="painel btn btn-linha" href="#pedidos">Sou cliente</a><a class="painel btn btn-linha" href="#motorista">Sou motorista</a><a class="painel btn btn-linha" href="#admin">Administrador</a></div><p style="margin-top:22px"><a href="#inicio">Visitar a página inicial</a></p></section>`;
 TITULOS.acesso='Entrar no aplicativo';
 if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone===true)&&['','#inicio','#entrar'].includes(location.hash))location.hash='entrar';
+
+/* ---------- Filtros da aba Motoristas ---------- */
+UI.filtroMot={q:'',status:'',veiculo:'',cidade:'',categoria:'',docs:''};
+const semAcento=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+function passaFiltroMot(m){
+  const f=UI.filtroMot, q=semAcento(f.q).trim(), qd=dig(f.q);
+  if(q){const texto=semAcento([m.nome,m.email,m.placa,m.documento,fone(m.tel)].join(' ')), num=dig(m.documento)+' '+dig(m.tel)+' '+semAcento(m.placa).replace(/[^a-z0-9]/g,'');
+    if(!texto.includes(q) && !(qd.length>=3&&num.includes(qd)) && !num.includes(q.replace(/[^a-z0-9]/g,'')||'§')) return false;}
+  if(f.status && m.status!==f.status) return false;
+  if(f.veiculo && m.veiculo!==f.veiculo) return false;
+  if(f.cidade && !(m.cidades||[]).includes(f.cidade)) return false;
+  if(f.categoria && !(m.categorias||[]).includes(f.categoria)) return false;
+  if(f.docs==='pendentes' && fotosMotoristaCompletas(m) && (m.docs||{}).cnh && (m.docs||{}).crlv) return false;
+  if(f.docs==='senha' && !(m.recuperacaoSolicitadaEm||!m.credencial)) return false;
+  if(f.docs==='disponivel' && m.disponivel!==true) return false;
+  return true;
+}
+function barraFiltroMot(total,vis){
+  const f=UI.filtroMot, sel=(n,obj,vazio)=>`<select name="${n}" data-filtro-mot><option value="">${vazio}</option>${opts(obj,f[n])}</select>`;
+  return `<form id="filtro-motoristas" class="painel grade" style="margin-bottom:16px" onsubmit="return false">
+    <div class="grade g3">
+      <label class="campo" style="grid-column:span 2"><span>Pesquisar</span><input type="search" name="q" data-filtro-mot value="${esc(f.q)}" placeholder="Nome, CPF/CNPJ, telefone, placa ou e-mail" autocomplete="off"></label>
+      <label class="campo"><span>Situação</span>${sel('status',STATUS_MOT,'Todas')}</label>
+      <label class="campo"><span>Veículo</span>${sel('veiculo',VEICULOS,'Todos')}</label>
+      <label class="campo"><span>Cidade atendida</span>${sel('cidade',Object.fromEntries(CIDADES.map(c=>[c,c])),'Todas')}</label>
+      <label class="campo"><span>Tipo de frete</span>${sel('categoria',CATEGORIAS,'Todos')}</label>
+      <label class="campo"><span>Mostrar só</span>${sel('docs',{pendentes:'Documentos ou fotos pendentes',senha:'Sem senha ou pediu recuperação',disponivel:'Disponíveis para fretes'},'Todos')}</label>
+    </div>
+    <div class="acoes" style="justify-content:space-between"><span class="small muted" id="mot-contagem" aria-live="polite">${vis} de ${total} motorista(s)</span><button type="button" class="btn btn-linha btn-sm" data-act="limpar-filtro-mot">Limpar filtros</button></div>
+  </form>`;
+}
+function aplicarFiltroMot(){
+  let vis=0; const linhas=$$('[data-mot-linha]');
+  linhas.forEach(tr=>{const m=Store.get('motoristas',tr.dataset.motLinha);const ok=!!m&&passaFiltroMot(m);tr.hidden=!ok;if(ok)vis++;});
+  const c=$('#mot-contagem'); if(c) c.textContent=`${vis} de ${linhas.length} motorista(s)`;
+  const v=$('#mot-sem-resultado'); if(v) v.hidden=vis>0;
+}
+const atualizarFiltroMot=e=>{const el=e.target.closest('[data-filtro-mot]');if(!el)return;UI.filtroMot[el.name]=el.value;aplicarFiltroMot();};
+document.addEventListener('input',atualizarFiltroMot);
+document.addEventListener('change',atualizarFiltroMot);
+ACOES['limpar-filtro-mot']=()=>{UI.filtroMot={q:'',status:'',veiculo:'',cidade:'',categoria:'',docs:''};render(true);};
+// Redefinição de senha pelo administrador: registra na auditoria.
+{const orig=FORMS['form-senha-legado'];FORMS['form-senha-legado']=async f=>{const m=Store.get('motoristas',f.dataset.id),antes=m?.senhaAlteradaEm;await orig(f);const depois=Store.get('motoristas',f.dataset.id);if(depois&&depois.senhaAlteradaEm!==antes)await log('Senha de motorista redefinida',depois.nome);};}
 
 /* ---------- Avisos por WhatsApp em cada etapa ---------- */
 // Envio gratuito pelo link wa.me: o app prepara a mensagem e quem fez a ação toca em enviar.
