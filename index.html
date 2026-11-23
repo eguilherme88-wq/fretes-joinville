@@ -327,6 +327,39 @@ const FLUXO = ['aberto','aguardando','confirmado','coleta','transporte','entregu
    Crie em console.cloud.google.com, ative Maps JavaScript API, Directions API e Places API,
    e restrinja a chave ao domínio do seu site. Também pode ser informada em Administração > Configurações. */
 const GOOGLE_MAPS_API_KEY = '';
+/* Firebase (banco de dados compartilhado).
+   Cole aqui o objeto firebaseConfig do Console do Firebase (Configurações do projeto > Seus apps > Web).
+   Vazio: os dados ficam somente neste navegador, como antes. */
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyBnLn9eKCaOQmEq2vJOB-avjxFT9xdIaNg',
+  authDomain: 'fretes-joinville.firebaseapp.com',
+  projectId: 'fretes-joinville',
+  storageBucket: 'fretes-joinville.firebasestorage.app',
+  messagingSenderId: '221227899795',
+  appId: '1:221227899795:web:e92bfd9772d4fdcf626666'
+};
+const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/13.4.0/';
+const firebaseConfigurado = () => !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
+function carregarScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('Falha ao carregar '+src)); document.head.appendChild(s); }); }
+async function iniciarFirebase(){
+  if(!window.firebase){
+    await carregarScript(FIREBASE_SDK+'firebase-app-compat.js');
+    await carregarScript(FIREBASE_SDK+'firebase-auth-compat.js');
+    await carregarScript(FIREBASE_SDK+'firebase-firestore-compat.js');
+  }
+  const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(FIREBASE_CONFIG);
+  const auth = app.auth(), db = app.firestore();
+  try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){}
+  await new Promise(r=>{ const u=auth.onAuthStateChanged(()=>{ u(); r(); }); });
+  // A sessão de administrador não é restaurada ao recarregar: volta para uma sessão anônima.
+  if(auth.currentUser && !auth.currentUser.isAnonymous) await auth.signOut();
+  if(!auth.currentUser) await auth.signInAnonymously();
+  return {auth, db};
+}
+async function ehAdminFirebase(){
+  const u=Store.fbAuth&&Store.fbAuth.currentUser; if(!u||u.isAnonymous) return false;
+  try{ return (await Store.db.collection('admins').doc(u.uid).get()).exists; }catch(e){ return false; }
+}
 const STATUS_MOT = {pendente:'Em análise', aprovado:'Aprovado', recusado:'Recusado', suspenso:'Suspenso'};
 
 /* ---------- Utilidades ---------- */
@@ -461,22 +494,26 @@ function ativarAutocompletar(){
 const COLS = ['mensalidades','clientes','motoristas','pedidos','propostas','auditoria','config'];
 const LS_KEY = 'fretes-joinville-v1';
 const Store = {
-  modo:'local', db:null, user:null, admin:true, somenteLeitura:false,
+  modo:'local', db:null, fbAuth:null, local:null, user:null, admin:true, somenteLeitura:false,
   data:{mensalidades:{},clientes:{},motoristas:{},pedidos:{},propostas:{},auditoria:{},config:{}},
   ready:null,
   carregarLocal(){
-    try{ const raw=lsGet(LS_KEY); if(raw){ const o=JSON.parse(raw); COLS.forEach(c=>{ this.data[c]=o[c]||{}; }); } }catch(e){}
+    try{ const raw=lsGet(LS_KEY); if(raw){ const o=JSON.parse(raw); COLS.forEach(c=>{ this.data[c]=o[c]||{}; }); this.local=JSON.parse(raw); } }catch(e){}
   },
   salvarLocal(){try{localStorage.setItem(LS_KEY,JSON.stringify(this.data));}catch(e){toast('Não foi possível salvar: o armazenamento deste navegador está cheio ou indisponível. Seus dados anteriores foram preservados.',true);throw e;}},
   async init(){
     this.carregarLocal();
     let db=null;
-    if(window.claude && typeof window.claude.use==='function'){
+    if(firebaseConfigurado()){
+      try{ const fb=await iniciarFirebase(); db=fb.db; this.fbAuth=fb.auth; this.modo='firebase'; }
+      catch(e){ db=null; toast('Não foi possível conectar ao Firebase. Usando os dados deste navegador.', true); }
+    }
+    if(!db && window.claude && typeof window.claude.use==='function'){
       try{ db = await window.claude.use('db'); }catch(e){ db=null; }
       try{ this.user = await window.claude.use('user'); }catch(e){ this.user=null; }
     }
     if(db){
-      this.db=db; this.modo='db';
+      this.db=db; if(this.modo!=='firebase') this.modo='db';
       COLS.forEach(c=>{ this.data[c]={}; });
       COLS.forEach(c=>{
         let q = db.collection(c);
@@ -486,6 +523,7 @@ const Store = {
           this.data[c]=m; aoMudarDados();
         }, err=>{ if(err && err.code!=='revoked') toast('Não foi possível sincronizar '+c+'. Recarregue a página.', true); });
       });
+      if(this.modo==='firebase'){ $('#modo-dados').textContent='Os dados ficam no banco de dados Firebase da plataforma.'; $('#nav-admin').hidden=false; return; }
       if(this.user){
         try{ const ed = await this.user.canEdit(); this.admin = ed!==false; }catch(e){}
         try{ const w = await this.user.can('data.write'); if(w===false) this.somenteLeitura=true; }catch(e){}
@@ -504,10 +542,14 @@ const Store = {
     const limpo = JSON.parse(JSON.stringify(obj));
     const anteriorLocal=this.data[c][obj.id];
     this.data[c][obj.id]=limpo;
-    if(this.modo==='db'){
+    if(this.modo==='db'||this.modo==='firebase'){
       try{ await this.db.collection(c).doc(obj.id).set(limpo); }
       catch(e){
-        if(e && e.code==='invalid_argument'){ this.somenteLeitura=true; toast('Você não tem permissão para alterar os dados desta página.', true); }
+        if(anteriorLocal===undefined) delete this.data[c][obj.id]; else this.data[c][obj.id]=anteriorLocal;
+        if(e && e.code==='permission-denied'){ toast('Você não tem permissão para esta alteração.', true); }
+        else if(e && e.code==='invalid-argument' && this.modo==='firebase'){ toast('O registro é grande demais para o banco (limite de 1 MB). Use fotos menores.', true); }
+        else if(e && e.code==='resource-exhausted'){ toast('O limite do plano do Firebase foi atingido. Tente mais tarde ou revise o plano.', true); }
+        else if(e && e.code==='invalid_argument'){ this.somenteLeitura=true; toast('Você não tem permissão para alterar os dados desta página.', true); }
         else if(e && e.code==='quota_exceeded'){ toast('O limite de armazenamento foi atingido. Peça à administração para limpar registros antigos.', true); }
         else toast('Não foi possível salvar agora. Tente de novo em alguns segundos.', true);
         throw e;
@@ -1102,17 +1144,31 @@ function adminConfig(){
       <p class="small muted" style="margin:0">Cria motoristas, pedidos e propostas fictícios para apresentar a plataforma. O cliente de exemplo usa o telefone (47) 98888-7777.</p>
       <div class="acoes"><button class="btn btn-linha" data-act="exemplos" type="button">Carregar dados de exemplo</button>
       ${Store.modo==='local'?`<button class="btn btn-perigo" data-act="limpar" type="button">Apagar todos os dados deste navegador</button>`:''}</div>
-    </div>`;
+    </div>
+    ${Store.modo==='firebase'?painelMigracaoFirebase():''}`;
 }
 
 /* ---------- Ações ---------- */
 let adminAutorizado=false;
 async function hashSenha(senha,sal){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sal+senha));return Array.from(new Uint8Array(b),x=>x.toString(16).padStart(2,'0')).join('');}
-function telaAdminLogin(){const existe=!!lsGet('fj-admin-credencial');return `<div class="wrap pagina"><form id="form-admin-login" class="painel grade" style="max-width:440px;margin:auto"><h1 style="font-size:2rem">Administração</h1><p>${existe?'Informe a senha do administrador.':'Primeiro acesso: crie a senha do administrador deste navegador.'}</p><label class="campo"><span>Senha do administrador</span><input type="password" name="senha" required minlength="8" autocomplete="${existe?'current-password':'new-password'}"></label>${existe?'':'<label class="campo"><span>Confirme a senha</span><input type="password" name="confirmacao" required minlength="8" autocomplete="new-password"></label>'}<button class="btn">${existe?'Entrar':'Criar senha e entrar'}</button><small class="muted">Proteção local deste HTML. Para autenticação em um site público, é necessário um servidor com controle de acesso.</small></form></div>`;}
+function telaAdminLoginFirebase(){return `<div class="wrap pagina"><form id="form-admin-login" class="painel grade" style="max-width:440px;margin:auto"><h1 style="font-size:2rem">Administração</h1><p>Entre com o e-mail e a senha do administrador cadastrados no Firebase.</p><label class="campo"><span>E-mail</span><input type="email" name="email" required autocomplete="username"></label><label class="campo"><span>Senha</span><input type="password" name="senha" required autocomplete="current-password"></label><button class="btn">Entrar</button><small class="muted">O acesso é liberado somente para contas listadas na coleção <b>admins</b> do Firestore.</small></form></div>`;}
+async function entrarAdminFirebase(f){
+  const d=new FormData(f),btn=$('button',f);btn.disabled=true;
+  try{
+    await Store.fbAuth.signInWithEmailAndPassword((d.get('email')||'').trim(),d.get('senha')||'');
+    if(!await ehAdminFirebase()){ await Store.fbAuth.signOut(); await Store.fbAuth.signInAnonymously(); return toast('Esta conta não tem permissão de administrador.',true); }
+    adminAutorizado=true;sessaoCliente=null;sessaoMotorista=null;lsSet('fj-app-perfil','administrador');location.hash='admin';render(true);
+  }catch(e){
+    if(!Store.fbAuth.currentUser) try{ await Store.fbAuth.signInAnonymously(); }catch(_){}
+    toast(['auth/invalid-credential','auth/wrong-password','auth/user-not-found','auth/invalid-email'].includes(e.code)?'E-mail ou senha incorretos.':'Não foi possível entrar agora. Tente novamente.',true);
+  }finally{btn.disabled=false;}
+}
+async function sairAdminFirebase(){ try{ await Store.fbAuth.signOut(); await Store.fbAuth.signInAnonymously(); }catch(e){} }
+function telaAdminLogin(){if(Store.modo==='firebase')return telaAdminLoginFirebase();const existe=!!lsGet('fj-admin-credencial');return `<div class="wrap pagina"><form id="form-admin-login" class="painel grade" style="max-width:440px;margin:auto"><h1 style="font-size:2rem">Administração</h1><p>${existe?'Informe a senha do administrador.':'Primeiro acesso: crie a senha do administrador deste navegador.'}</p><label class="campo"><span>Senha do administrador</span><input type="password" name="senha" required minlength="8" autocomplete="${existe?'current-password':'new-password'}"></label>${existe?'':'<label class="campo"><span>Confirme a senha</span><input type="password" name="confirmacao" required minlength="8" autocomplete="new-password"></label>'}<button class="btn">${existe?'Entrar':'Criar senha e entrar'}</button><small class="muted">Proteção local deste HTML. Para autenticação em um site público, é necessário um servidor com controle de acesso.</small></form></div>`;}
 const ACOES = {
   'tema': ()=>{const atual=document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');const proximo=atual==='dark'?'light':'dark';document.documentElement.dataset.theme=proximo;lsSet('fj-tema',proximo);},
   'tela': async ()=>{try{if(document.fullscreenElement) await document.exitFullscreen();else if(document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();else toast('Este navegador não oferece tela cheia.');}catch(e){toast('Não foi possível abrir tela cheia neste navegador.',true);}},
-  'sair-admin': ()=>{adminAutorizado=false;render(true);},
+  'sair-admin': async ()=>{adminAutorizado=false;if(Store.modo==='firebase')await sairAdminFirebase();render(true);},
   'calc-rota': ()=>atualizarRota(true),
   'atualizar': ()=>render(true),
   'novo-pedido': (el,e)=>{ e.preventDefault(); UI.pedidoCriado=null; render(true); window.scrollTo(0,0); },
@@ -1233,7 +1289,7 @@ function confirmarCancelamento(id, por){
 let fotosPedido = [];
 function erros(box, lista){ const b=$(box); if(!lista.length){ b.hidden=true; return false; } b.hidden=false; b.innerHTML='<b>Confira antes de enviar:</b><ul class="lista-simples">'+lista.map(e=>'<li>'+esc(e)+'</li>').join('')+'</ul>'; b.scrollIntoView({block:'center',behavior:'smooth'}); return true; }
 const FORMS = {
-  'form-admin-login': async f=>{const d=new FormData(f),senha=d.get('senha');if(senha.length<8)return toast('Use ao menos 8 caracteres.',true);try{const salvo=lsGet('fj-admin-credencial');if(salvo){const c=JSON.parse(salvo);if(await hashSenha(senha,c.sal)!==c.hash)return toast('Senha incorreta.',true);}else{if(senha!==d.get('confirmacao'))return toast('As senhas não coincidem.',true);const sal=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');const cred=JSON.stringify({sal,hash:await hashSenha(senha,sal)});lsSet('fj-admin-credencial',cred);if(lsGet('fj-admin-credencial')!==cred)return toast('Não foi possível salvar a senha neste navegador.',true);}adminAutorizado=true;sessaoCliente=null;sessaoMotorista=null;lsSet('fj-app-perfil','administrador');location.hash='admin';render(true);}catch(e){toast('Não foi possível verificar a senha neste navegador.',true);}},
+  'form-admin-login': async f=>{if(Store.modo==='firebase')return entrarAdminFirebase(f);const d=new FormData(f),senha=d.get('senha');if(senha.length<8)return toast('Use ao menos 8 caracteres.',true);try{const salvo=lsGet('fj-admin-credencial');if(salvo){const c=JSON.parse(salvo);if(await hashSenha(senha,c.sal)!==c.hash)return toast('Senha incorreta.',true);}else{if(senha!==d.get('confirmacao'))return toast('As senhas não coincidem.',true);const sal=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');const cred=JSON.stringify({sal,hash:await hashSenha(senha,sal)});lsSet('fj-admin-credencial',cred);if(lsGet('fj-admin-credencial')!==cred)return toast('Não foi possível salvar a senha neste navegador.',true);}adminAutorizado=true;sessaoCliente=null;sessaoMotorista=null;lsSet('fj-app-perfil','administrador');location.hash='admin';render(true);}catch(e){toast('Não foi possível verificar a senha neste navegador.',true);}},
   'form-tarifa': async f=>{const m=Store.get('motoristas',f.dataset.id);if(!m || (!adminAutorizado && motoristaLogado()?.id!==m.id))return;const valorKm=Number(new FormData(f).get('valorKm'));if(!(valorKm>0))return toast('Informe uma tarifa maior que zero.',true);await Store.put('motoristas',{...m,valorKm});toast('Tarifa atualizada.');render(true);},
   'form-placa': f=>{ const d=new FormData(f); location.hash='pedir?'+new URLSearchParams({de:d.get('de'),para:d.get('para'),cat:d.get('cat')}).toString(); },
   'form-pedido': async f=>{
@@ -1766,6 +1822,22 @@ function aplicarFerramentasPerfil(){
 VIEWS.acesso=()=>`<section class="wrap pagina"><div class="pagina-topo"><h1>Entrar no Fretes Joinville</h1><p>Escolha seu perfil e entre com sua senha individual.</p></div><div class="grade g3"><a class="painel btn btn-linha" href="#pedidos">Sou cliente</a><a class="painel btn btn-linha" href="#motorista">Sou motorista</a><a class="painel btn btn-linha" href="#admin">Administrador</a></div><p style="margin-top:22px"><a href="#inicio">Visitar a página inicial</a></p></section>`;
 TITULOS.acesso='Entrar no aplicativo';
 if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone===true)&&['','#inicio','#entrar'].includes(location.hash))location.hash='entrar';
+
+/* ---------- Firebase: migração e sessões ---------- */
+function contarLocal(){const o=Store.local||{};return COLS.reduce((s,c)=>s+Object.keys(o[c]||{}).length,0);}
+function painelMigracaoFirebase(){const n=contarLocal();return `<div class="painel grade" style="max-width:560px"><h3>Firebase</h3><p class="small muted" style="margin:0">Banco conectado: <b>${esc(FIREBASE_CONFIG.projectId)}</b>.</p>${n?`<p class="small" style="margin:0">Este navegador tem ${n} registro(s) salvos antes da conexão com o Firebase.</p><div class="acoes"><button class="btn btn-linha" type="button" data-act="migrar-firebase">Enviar dados deste navegador para o Firebase</button></div><p class="small muted" style="margin:0">Registros com o mesmo código no Firebase serão substituídos pelos deste navegador.</p>`:'<p class="small muted" style="margin:0">Não há dados locais para enviar.</p>'}</div>`;}
+ACOES['migrar-firebase']=async el=>{
+  if(!adminAutorizado||Store.modo!=='firebase')return;
+  const o=Store.local||{};el.disabled=true;let ok=0,falhas=0;
+  for(const c of COLS)for(const [id,doc] of Object.entries(o[c]||{})){
+    try{await Store.db.collection(c).doc(id).set(JSON.parse(JSON.stringify({...doc,id})));ok++;}catch(e){falhas++;}
+  }
+  toast(falhas?`${ok} registro(s) enviados; ${falhas} falharam (verifique o tamanho das fotos).`:`${ok} registro(s) enviados ao Firebase.`,!!falhas);
+  el.disabled=false;
+};
+// Ao entrar como cliente ou motorista, encerra uma sessão de administrador do Firebase neste aparelho.
+const contaFirebaseOriginal=FORMS['form-conta'];
+FORMS['form-conta']=async f=>{if(Store.modo==='firebase'&&Store.fbAuth?.currentUser&&!Store.fbAuth.currentUser.isAnonymous)await sairAdminFirebase();return contaFirebaseOriginal(f);};
 
 /* ---------- Início ---------- */
 lsSet('fj-visual',null);delete document.body.dataset.visual;
