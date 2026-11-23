@@ -521,14 +521,31 @@ const Store = {
     if(db){
       this.db=db; if(this.modo!=='firebase') this.modo='db';
       COLS.forEach(c=>{ this.data[c]={}; });
-      COLS.forEach(c=>{
-        let q = db.collection(c);
-        if(c==='auditoria') q = q.orderBy('em','desc').limit(300);
-        q.onSnapshot(snap=>{
-          const m={}; snap.docs.forEach(d=>{ m[d.id]=Object.assign({},d.data(),{id:d.id}); });
-          this.data[c]=m; aoMudarDados();
-        }, err=>{ if(err && err.code!=='revoked') toast('Não foi possível sincronizar '+c+'. Recarregue a página.', true); });
-      });
+      // Assinaturas em tempo real. No Firebase, a troca de login (entrar/sair da administração)
+      // derruba as assinaturas; elas são refeitas automaticamente a cada nova sessão.
+      this.assinar=()=>{
+        (this.cancelar||[]).forEach(u=>{ try{u();}catch(e){} });
+        this.cancelar=COLS.map(c=>{
+          let q = db.collection(c);
+          if(c==='auditoria') q = q.orderBy('em','desc').limit(300);
+          return q.onSnapshot(snap=>{
+            this.falhasSync=0;
+            const m={}; snap.docs.forEach(d=>{ m[d.id]=Object.assign({},d.data(),{id:d.id}); });
+            this.data[c]=m; aoMudarDados();
+          }, err=>this.erroSync(c,err));
+        });
+      };
+      this.erroSync=(c,err)=>{
+        if(!err || err.code==='revoked') return;
+        if(this.modo!=='firebase'){ toast('Não foi possível sincronizar '+c+'. Recarregue a página.', true); return; }
+        if(err.code==='permission-denied' && (!this.fbAuth.currentUser || this.trocandoSessao)) return; // nova sessão vai reassinar
+        if(this.tentativaSync) return;
+        this.falhasSync=(this.falhasSync||0)+1;
+        if(this.falhasSync>=3){ if(!this.avisouSync){ this.avisouSync=true; toast('Sem sincronização com o banco de dados. Confira a internet e recarregue a página.', true); } return; }
+        this.tentativaSync=setTimeout(()=>{ this.tentativaSync=null; this.assinar(); }, 2000*this.falhasSync);
+      };
+      if(this.modo==='firebase') this.fbAuth.onAuthStateChanged(u=>{ if(u){ this.trocandoSessao=false; this.avisouSync=false; this.falhasSync=0; this.assinar(); } });
+      else this.assinar();
       if(this.modo==='firebase'){ $('#modo-dados').textContent='Os dados ficam no banco de dados Firebase da plataforma.'; $('#nav-admin').hidden=false; return; }
       if(this.user){
         try{ const ed = await this.user.canEdit(); this.admin = ed!==false; }catch(e){}
@@ -1165,15 +1182,17 @@ function telaAdminLoginFirebase(){return `<div class="wrap pagina"><form id="for
 async function entrarAdminFirebase(f){
   const d=new FormData(f),btn=$('button',f);btn.disabled=true;
   try{
+    Store.trocandoSessao=true;
     await Store.fbAuth.signInWithEmailAndPassword((d.get('email')||'').trim(),d.get('senha')||'');
     if(!await ehAdminFirebase()){ await Store.fbAuth.signOut(); await Store.fbAuth.signInAnonymously(); return toast('Esta conta não tem permissão de administrador.',true); }
     adminAutorizado=true;sessaoCliente=null;sessaoMotorista=null;lsSet('fj-app-perfil','administrador');location.hash='admin';render(true);
   }catch(e){
+    Store.trocandoSessao=false;
     if(!Store.fbAuth.currentUser) try{ await Store.fbAuth.signInAnonymously(); }catch(_){}
     toast(['auth/invalid-credential','auth/wrong-password','auth/user-not-found','auth/invalid-email'].includes(e.code)?'E-mail ou senha incorretos.':'Não foi possível entrar agora. Tente novamente.',true);
   }finally{btn.disabled=false;}
 }
-async function sairAdminFirebase(){ try{ await Store.fbAuth.signOut(); await Store.fbAuth.signInAnonymously(); }catch(e){} }
+async function sairAdminFirebase(){ Store.trocandoSessao=true; try{ await Store.fbAuth.signOut(); await Store.fbAuth.signInAnonymously(); }catch(e){ Store.trocandoSessao=false; } }
 function telaAdminLogin(){if(Store.modo==='firebase')return telaAdminLoginFirebase();const existe=!!lsGet('fj-admin-credencial');return `<div class="wrap pagina"><form id="form-admin-login" class="painel grade" style="max-width:440px;margin:auto"><h1 style="font-size:2rem">Administração</h1><p>${existe?'Informe a senha do administrador.':'Primeiro acesso: crie a senha do administrador deste navegador.'}</p><label class="campo"><span>Senha do administrador</span><input type="password" name="senha" required minlength="8" autocomplete="${existe?'current-password':'new-password'}"></label>${existe?'':'<label class="campo"><span>Confirme a senha</span><input type="password" name="confirmacao" required minlength="8" autocomplete="new-password"></label>'}<button class="btn">${existe?'Entrar':'Criar senha e entrar'}</button><small class="muted">Proteção local deste HTML. Para autenticação em um site público, é necessário um servidor com controle de acesso.</small></form></div>`;}
 const ACOES = {
   'tema': ()=>{const atual=document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');const proximo=atual==='dark'?'light':'dark';document.documentElement.dataset.theme=proximo;lsSet('fj-tema',proximo);},
