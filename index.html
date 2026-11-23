@@ -324,7 +324,7 @@ const FLUXO = ['aberto','aguardando','confirmado','coleta','transporte','entregu
 /* Chave da API do Google Maps (opcional).
    Sem chave: o mapa com a rota aparece normalmente e a distância é estimada pelo OpenStreetMap.
    Com chave: distância e tempo vêm do Google e os campos de endereço ganham autocompletar.
-   Crie em console.cloud.google.com, ative Maps JavaScript API, Directions API e Places API,
+   Crie em console.cloud.google.com, ative Routes API e Places API (New),
    e restrinja a chave ao domínio do seu site. Também pode ser informada em Administração > Configurações. */
 const GOOGLE_MAPS_API_KEY = '';
 /* Firebase (banco de dados compartilhado).
@@ -395,28 +395,20 @@ const urlMapaEmbed = (o,d) => 'https://maps.google.com/maps?saddr='+encodeURICom
 const urlMapaLink = (o,d) => 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(o)+'&destination='+encodeURIComponent(d)+'&travelmode=driving';
 const kmTxt = r => r ? `${Number(r.km).toLocaleString('pt-BR',{maximumFractionDigits:1})} km, cerca de ${duracao(r.minutos*60000)}` : '';
 const chaveMaps = () => (Store.config().mapsKey || GOOGLE_MAPS_API_KEY || '').trim();
-let gmPromise = null;
-function carregarGoogle(key){
-  if(window.google && google.maps && google.maps.DirectionsService) return Promise.resolve(google.maps);
-  if(gmPromise) return gmPromise;
-  gmPromise = new Promise((res,rej)=>{
-    window.__fjGm = () => res(google.maps);
-    window.gm_authFailure = () => { toast('A chave do Google Maps foi recusada. Confira em Administração > Configurações.', true); };
-    const sc=document.createElement('script');
-    sc.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&libraries=places&language=pt-BR&region=BR&callback=__fjGm';
-    sc.async=true; sc.onerror=()=>{ gmPromise=null; rej(new Error('rede')); };
-    document.head.appendChild(sc);
-  });
-  return gmPromise;
+let gmPromise = null; // mantido por compatibilidade; o app usa as APIs REST novas do Google.
+const FJ_CENTRO={latitude:-26.3045,longitude:-48.8487};
+async function rotaGoogle(key,o,d){
+  const r=await fetch('https://routes.googleapis.com/directions/v2:computeRoutes',{method:'POST',
+    headers:{'Content-Type':'application/json','X-Goog-Api-Key':key,'X-Goog-FieldMask':'routes.distanceMeters,routes.duration'},
+    body:JSON.stringify({origin:{address:endCompleto(o)},destination:{address:endCompleto(d)},travelMode:'DRIVE',routingPreference:'TRAFFIC_UNAWARE',languageCode:'pt-BR',regionCode:'BR',units:'METRIC'})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){ if(r.status===403||r.status===400) toast('A chave do Google Maps foi recusada ('+(j.error?.status||r.status)+'). Usando a estimativa do OpenStreetMap.',true); throw new Error('google'); }
+  const rt=j.routes&&j.routes[0]; if(!rt||!rt.distanceMeters) throw new Error('rota');
+  return {km:Math.round(rt.distanceMeters/100)/10, minutos:Math.round(parseInt(rt.duration||'0',10)/60), fonte:'Google Maps'};
 }
 async function calcularRota(o,d){
   const key=chaveMaps();
-  if(key){
-    const gm=await carregarGoogle(key);
-    const r=await new gm.DirectionsService().route({origin:endCompleto(o), destination:endCompleto(d), travelMode:gm.TravelMode.DRIVING, region:'br'});
-    const leg=r.routes[0].legs[0];
-    return {km:Math.round(leg.distance.value/100)/10, minutos:Math.round(leg.duration.value/60), fonte:'Google Maps'};
-  }
+  if(key){ try{ return await rotaGoogle(key,o,d); }catch(e){} }
   const geo = async e => {
     for(const q of [endCompleto(e), `${e.cidade}, Santa Catarina, Brasil`]){
       const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q='+encodeURIComponent(q));
@@ -480,14 +472,28 @@ async function atualizarRota(forcar){
 }
 function ativarAutocompletar(){
   const key=chaveMaps(); if(!key || !$('#form-pedido')) return;
-  carregarGoogle(key).then(gm=>{
-    if(!gm.places) return;
-    ['origemBairro','destinoBairro'].forEach(n=>{
-      const inp=$(`#form-pedido [name=${n}]`); if(!inp || inp.dataset.ac) return; inp.dataset.ac='1';
-      const ac=new gm.places.Autocomplete(inp,{componentRestrictions:{country:'br'}, fields:['formatted_address']});
-      ac.addListener('place_changed',()=>{ const pl=ac.getPlace(); if(pl&&pl.formatted_address) inp.value=pl.formatted_address.replace(/, Brasil$/,'').replace(/ - SC, \d{5}-\d{3}$/,''); atualizarRota(); });
+  const limpar=t=>t.replace(/, Brasil$/,'').replace(/ - SC(, \d{5}-\d{3})?$/,'');
+  ['origemBairro','destinoBairro'].forEach(n=>{
+    const inp=$(`#form-pedido [name=${n}]`); if(!inp || inp.dataset.ac) return; inp.dataset.ac='1';
+    const dl=document.createElement('datalist'); dl.id='ac-'+n; inp.after(dl); inp.setAttribute('list',dl.id); inp.setAttribute('autocomplete','off');
+    let timer=null, sessao=null, ultimo='';
+    inp.addEventListener('focus',()=>{ sessao=(crypto.randomUUID?crypto.randomUUID():uid('s')); });
+    inp.addEventListener('input',()=>{
+      clearTimeout(timer); const q=inp.value.trim();
+      if(q.length<3||q===ultimo||[...dl.options].some(op=>op.value===inp.value)) return;
+      timer=setTimeout(async()=>{
+        ultimo=q;
+        try{
+          const r=await fetch('https://places.googleapis.com/v1/places:autocomplete',{method:'POST',
+            headers:{'Content-Type':'application/json','X-Goog-Api-Key':key,'X-Goog-FieldMask':'suggestions.placePrediction.text.text'},
+            body:JSON.stringify({input:q,includedRegionCodes:['br'],languageCode:'pt-BR',sessionToken:sessao||undefined,locationBias:{circle:{center:FJ_CENTRO,radius:50000}}})});
+          if(!r.ok) return;
+          const j=await r.json();
+          dl.innerHTML=(j.suggestions||[]).map(s=>s.placePrediction&&s.placePrediction.text&&s.placePrediction.text.text).filter(Boolean).map(t=>`<option value="${esc(limpar(t))}"></option>`).join('');
+        }catch(e){}
+      },350);
     });
-  }).catch(()=>{});
+  });
 }
 
 /* ---------- Armazenamento (db compartilhado ou navegador) ---------- */
@@ -1136,7 +1142,7 @@ function adminConfig(){
       <p class="small muted" style="margin:0">Mostrada aos motoristas no cadastro e no cálculo de ganhos. Teste com clientes e motoristas antes de alterar.</p>
       <h3 style="margin-top:8px">Google Maps</h3>
       <label class="campo"><span>Chave da API do Google Maps <span class="dica">opcional</span></span><input type="text" name="mapsKey" value="${esc(c.mapsKey||'')}" placeholder="AIza…" autocomplete="off" spellcheck="false"></label>
-      <p class="small muted" style="margin:0">Sem chave, o mapa da rota aparece normalmente e a distância é estimada pelo OpenStreetMap. Com a chave, a distância e o tempo vêm do Google e os endereços ganham autocompletar. Ative Maps JavaScript API, Directions API e Places API e restrinja a chave ao domínio do site.</p>
+      <p class="small muted" style="margin:0">Sem chave, o mapa da rota aparece normalmente e a distância é estimada pelo OpenStreetMap. Com a chave, a distância e o tempo vêm do Google e os endereços ganham autocompletar. Ative a Routes API e a Places API (New) e restrinja a chave ao domínio do site.</p>
       <div class="acoes"><button class="btn" type="submit">Salvar configurações</button></div>
     </form>
     ${formConfigMensalidade()}<div class="painel grade" style="max-width:560px">
