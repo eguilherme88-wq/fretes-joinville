@@ -876,6 +876,7 @@ function telaPedido(id){
     </div></div>
     ${ocorr}
     <div class="acoes bloco"><button class="btn btn-linha" data-act="relatorio-orcamento" data-id="${esc(p.id)}">Imprimir orçamento</button>
+      ${p.motoristaId&&p.status!=='aberto'?`<button class="btn btn-linha" data-act="whats-status" data-id="${esc(p.id)}" data-para="motorista">Avisar motorista pelo WhatsApp</button>`:''}
       ${(p.status==='entregue'||p.status==='concluido')?`<button class="btn btn-linha" data-act="comprovante" data-id="${esc(p.id)}">Ver comprovante</button>`:''}
       ${p.status!=='aberto'&&p.status!=='cancelado'?`<button class="btn btn-linha" data-act="ocorrencia" data-id="${esc(p.id)}">Registrar ocorrência</button>`:''}
       ${podeCancelar?`<button class="btn btn-perigo" data-act="cancelar-cliente" data-id="${esc(p.id)}">Cancelar pedido</button>`:''}
@@ -932,6 +933,7 @@ VIEWS.motorista = () => {
         <p class="small" style="margin-top:10px">${esc(p.descricao)}</p>
         <div class="acoes" style="margin-top:10px"><button class="btn btn-sm" data-act="avancar" data-id="${esc(p.id)}" data-para="${prox[p.status][0]}">${prox[p.status][1]}</button>
         <a class="btn btn-linha btn-sm" href="${esc(urlMapaLink(endCompleto(p.origem),endCompleto(p.destino)))}" target="_blank" rel="noopener">Navegar no Google Maps</a>
+        <button class="btn btn-linha btn-sm" data-act="whats-status" data-id="${esc(p.id)}" data-para="cliente">Avisar cliente pelo WhatsApp</button>
         <button class="btn btn-linha btn-sm" data-act="ocorrencia" data-id="${esc(p.id)}">Registrar ocorrência</button></div>
       </div>`).join('')}</div>`
     : `<div class="painel vazio"><strong>Nenhum frete em andamento</strong>Quando um cliente escolher sua proposta, o frete aparece aqui com o contato dele.</div>`;
@@ -1828,6 +1830,75 @@ function aplicarFerramentasPerfil(){
 VIEWS.acesso=()=>`<section class="wrap pagina"><div class="pagina-topo"><h1>Entrar no Fretes Joinville</h1><p>Escolha seu perfil e entre com sua senha individual.</p></div><div class="grade g3"><a class="painel btn btn-linha" href="#pedidos">Sou cliente</a><a class="painel btn btn-linha" href="#motorista">Sou motorista</a><a class="painel btn btn-linha" href="#admin">Administrador</a></div><p style="margin-top:22px"><a href="#inicio">Visitar a página inicial</a></p></section>`;
 TITULOS.acesso='Entrar no aplicativo';
 if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone===true)&&['','#inicio','#entrar'].includes(location.hash))location.hash='entrar';
+
+/* ---------- Avisos por WhatsApp em cada etapa ---------- */
+// Envio gratuito pelo link wa.me: o app prepara a mensagem e quem fez a ação toca em enviar.
+// O contato do cliente só é usado depois que ele escolheu o motorista (LGPD).
+const linkApp = rota => location.origin+location.pathname+'#'+rota;
+const telWhats = t => { const d=dig(t); return d.length>=12&&d.startsWith('55')?d:'55'+d; };
+function textoWhats(p,para,extra={}){
+  const m=Store.get('motoristas',p.motoristaId)||{}, cli=p.cliente||{};
+  const rota=`${p.origem.bairro}, ${p.origem.cidade} → ${p.destino.bairro}, ${p.destino.cidade}`;
+  const cab=`*Fretes Joinville · Pedido ${p.codigo}*\n`;
+  const quando=`${dataBR(p.data)}${p.horaColeta?' às '+p.horaColeta:p.periodo?' ('+p.periodo+')':''}`;
+  if(extra.ocorrencia) return cab+`Olá, ${para==='cliente'?cli.nome:m.nome}. Foi registrada uma ocorrência neste frete:\n"${extra.ocorrencia}"\nDetalhes: ${linkApp(para==='cliente'?'pedidos/'+p.id:'motorista')}`;
+  if(p.status==='cancelado'){const c=p.cancelamento||{};return cab+`Olá, ${para==='cliente'?cli.nome:m.nome}. O frete ${rota} foi *cancelado* pela ${c.por||'plataforma'}.${c.motivo?'\nMotivo: '+c.motivo:''}`;}
+  const paraMot={
+    aguardando:`Olá, ${m.nome}! Sou ${cli.nome} e escolhi você para um frete:\n${rota}\nData: ${quando}\nCarga: ${p.descricao}\nValor: ${brl(p.valor)}\n\nAceite ou recuse no app: ${linkApp('motorista')}`,
+    confirmado:`Olá, ${m.nome}! Aqui é ${cli.nome}, do frete ${rota} em ${quando}. Qualquer dúvida, falamos por aqui.`,
+    coleta:`Olá, ${m.nome}! Aqui é ${cli.nome}. Estou aguardando a coleta do frete ${rota}.`,
+    transporte:`Olá, ${m.nome}! Aqui é ${cli.nome}, sobre o frete em transporte para ${p.destino.bairro}, ${p.destino.cidade}.`,
+    entregue:`Olá, ${m.nome}! Aqui é ${cli.nome}. Recebi a entrega do frete ${rota}.`,
+    concluido:`Olá, ${m.nome}! Confirmei o recebimento do frete ${rota}${p.avaliacao?' e avaliei com '+'★'.repeat(p.avaliacao.nota):''}. Obrigado pelo serviço!`
+  };
+  const paraCli={
+    aguardando:`Olá, ${cli.nome}! Aqui é ${m.nome}. Recebi sua solicitação de frete ${rota} e vou responder pelo app em breve.`,
+    confirmado:`Olá, ${cli.nome}! Aqui é ${m.nome}. *Aceitei seu frete* ${rota}.\nColeta prevista: ${quando}\nVeículo: ${VEICULOS[m.veiculo]||''}, placa ${m.placa||'—'}\nValor: ${brl(p.valor)}\n\nAcompanhe: ${linkApp('pedidos/'+p.id)}`,
+    coleta:`Olá, ${cli.nome}! Aqui é ${m.nome}. *Estou a caminho da coleta* em ${p.origem.bairro}, ${p.origem.cidade}.\nAcompanhe: ${linkApp('pedidos/'+p.id)}`,
+    transporte:`Olá, ${cli.nome}! Aqui é ${m.nome}. *Carga coletada*, seguindo para ${p.destino.bairro}, ${p.destino.cidade}.\nAcompanhe: ${linkApp('pedidos/'+p.id)}`,
+    entregue:`Olá, ${cli.nome}! Aqui é ${m.nome}. *Frete entregue* em ${p.destino.bairro}, ${p.destino.cidade}.\nConfirme o recebimento e avalie o serviço: ${linkApp('pedidos/'+p.id)}`,
+    concluido:`Olá, ${cli.nome}! Aqui é ${m.nome}. Obrigado por confirmar o recebimento do frete ${rota}!`
+  };
+  return cab+((para==='cliente'?paraCli:paraMot)[p.status]||`Atualização: ${STATUS[p.status]||p.status}.\n${linkApp(para==='cliente'?'pedidos/'+p.id:'motorista')}`);
+}
+function contatoWhats(p,para){
+  if(para==='cliente'){ if(!p.cliente?.tel||['aberto','aguardando'].includes(p.status)&&p.status!=='cancelado') return null; return {nome:p.cliente.nome,tel:p.cliente.tel}; }
+  const m=p.motoristaId&&Store.get('motoristas',p.motoristaId); return m&&m.tel?{nome:m.nome,tel:m.tel}:null;
+}
+function abrirAvisoWhats(p,destinos,extra){
+  const itens=destinos.map(para=>{const c=contatoWhats(p,para);return c&&{para,c,txt:textoWhats(p,para,extra)};}).filter(Boolean);
+  if(!itens.length) return;
+  abrirDialogo(`<h2>Avisar pelo WhatsApp</h2><p class="muted">Pedido ${esc(p.codigo)} · ${esc(STATUS[p.status]||'')}. A mensagem abre pronta no WhatsApp; confira e toque em enviar.</p>
+    ${itens.map(i=>`<div class="painel" style="margin-top:12px"><b>${i.para==='cliente'?'Cliente':'Motorista'}: ${esc(i.c.nome)}</b> <span class="muted small">${esc(fone(i.c.tel))}</span>
+      <div class="small" style="white-space:pre-wrap;margin:10px 0;padding:10px;background:var(--surface-2);border-radius:4px">${esc(i.txt)}</div>
+      <a class="btn" style="background:#1F9D55" href="https://wa.me/${telWhats(i.c.tel)}?text=${encodeURIComponent(i.txt)}" target="_blank" rel="noopener" data-whats-enviado>Abrir no WhatsApp</a></div>`).join('')}
+    <div class="acoes" style="margin-top:16px"><button class="btn btn-linha" data-act="fechar">Agora não</button></div>`);
+}
+document.addEventListener('click',e=>{ if(e.target.closest('[data-whats-enviado]')) setTimeout(()=>{ const rest=$$('#dlg-corpo [data-whats-enviado]').filter(a=>!a.dataset.ok); e.target.closest('[data-whats-enviado]').dataset.ok='1'; e.target.closest('[data-whats-enviado]').textContent='Aberto no WhatsApp ✓'; if(rest.length<=1) setTimeout(fecharDialogo,800); },300); });
+function quemAgiu(){ if(VIEW.nome==='admin'&&adminAutorizado) return 'admin'; return VIEW.nome==='motorista'?'motorista':'cliente'; }
+function destinosDoAviso(p,quem){ if(p.status==='cancelado') return quem==='admin'?['cliente','motorista']:quem==='motorista'?['cliente']:['motorista']; if(quem==='motorista') return ['cliente']; if(quem==='cliente') return ['motorista']; return ['cliente','motorista']; }
+// Envolve uma ação: se o status do pedido mudou, oferece o aviso para a outra parte.
+function avisarAoMudar(tabela,nome,pegarId){
+  const orig=tabela[nome]; if(!orig) return;
+  tabela[nome]=async(el,e)=>{
+    const id=pegarId(el), antes=id&&Store.get('pedidos',id)?.status, quem=quemAgiu();
+    const r=await orig(el,e);
+    const p=id&&Store.get('pedidos',id);
+    if(p&&p.status!==antes&&!(p.status==='aberto')) abrirAvisoWhats(p,destinosDoAviso(p,quem).filter(d=>!(d==='motorista'&&p.status==='cancelado'&&!p.motoristaId)));
+    return r;
+  };
+}
+avisarAoMudar(ACOES,'aceitar-ok',el=>Store.get('propostas',el.dataset.id)?.pedidoId);
+avisarAoMudar(ACOES,'responder-frete',el=>el.dataset.id);
+avisarAoMudar(ACOES,'avancar',el=>el.dataset.id);
+avisarAoMudar(ACOES,'cancelar-ok',el=>el.dataset.id);
+avisarAoMudar(FORMS,'form-avaliar',f=>f.dataset.id);
+// Pedido novo com motorista escolhido: avisa o motorista.
+{const orig=FORMS['form-pedido'];FORMS['form-pedido']=async f=>{const cli=clienteAtual(),antes=new Set(Store.lista('pedidos').map(p=>p.id));const r=await orig(f);const novo=Store.lista('pedidos').find(p=>!antes.has(p.id)&&p.clienteId===cli?.id);if(novo&&novo.status==='aguardando')abrirAvisoWhats(novo,['motorista']);return r;};}
+// Ocorrência: avisa a outra parte (após a confirmação do motorista).
+{const orig=FORMS['form-ocorrencia'];FORMS['form-ocorrencia']=async f=>{const texto=(new FormData(f).get('texto')||'').trim(),id=f.dataset.id,quem=quemAgiu(),n=(Store.get('pedidos',id)?.ocorrencias||[]).length;const r=await orig(f);const p=Store.get('pedidos',id);if(p&&(p.ocorrencias||[]).length>n)abrirAvisoWhats(p,quem==='motorista'?['cliente']:quem==='cliente'?['motorista']:['cliente','motorista'],{ocorrencia:texto});return r;};}
+// Botão "Avisar pelo WhatsApp" para reenviar a etapa atual.
+ACOES['whats-status']=el=>{const p=Store.get('pedidos',el.dataset.id);if(!p)return;const para=el.dataset.para;const cli=clienteAtual(),mot=motoristaLogado();const ok=adminAutorizado||(para==='motorista'&&cli&&(p.clienteId?p.clienteId===cli.id:dig(p.cliente.tel)===cli.tel))||(para==='cliente'&&mot&&p.motoristaId===mot.id);if(!ok)return toast('Entre na conta responsável por este pedido.',true);if(!contatoWhats(p,para))return toast('O contato fica disponível depois que o motorista aceitar o frete.',true);abrirAvisoWhats(p,[para]);};
 
 /* ---------- Firebase: migração e sessões ---------- */
 function contarLocal(){const o=Store.local||{};return COLS.reduce((s,c)=>s+Object.keys(o[c]||{}).length,0);}
