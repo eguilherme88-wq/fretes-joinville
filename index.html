@@ -1858,6 +1858,8 @@ if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone
 const P3D_CAT={light:['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#6250d6','#e34948'],dark:['#3987e5','#d95926','#199e70','#c98500','#d55181','#0ca30c','#9085e9','#e66767']};
 const P3D_STATUS=['aberto','aguardando','confirmado','coleta','transporte','entregue','concluido','cancelado'];
 const P3D={cenas:[],raf:null,estado:{rot:-0.6,auto:true},visto:false};
+// Posições aproximadas (longitude/latitude) convertidas para o plano do mapa; norte ao fundo.
+const P3D_CIDADES=Object.fromEntries(Object.entries({'Joinville':[-48.8487,-26.3045],'Araquari':[-48.7186,-26.3700],'Garuva':[-48.8550,-26.0270],'São Francisco do Sul':[-48.6383,-26.2433],'Guaramirim':[-49.0026,-26.4730],'Jaraguá do Sul':[-49.0713,-26.4851]}).map(([c,[lo,la]])=>[c,[(lo+48.855)*12,(la+26.26)*12]]));
 const p3dReduz=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
 function p3dTema(){const cs=getComputedStyle(document.documentElement),bg=cs.getPropertyValue('--surface').trim()||'#fff';const m=bg.match(/^#?([0-9a-f]{6})$/i);let escuro=false;if(m){const n=parseInt(m[1],16);escuro=((n>>16&255)*.299+(n>>8&255)*.587+(n&255)*.114)<128;}
   return {escuro,cat:escuro?P3D_CAT.dark:P3D_CAT.light,azul:escuro?'#3987e5':'#2a78d6',texto:cs.getPropertyValue('--text').trim(),muted:cs.getPropertyValue('--muted').trim(),linha:cs.getPropertyValue('--line').trim(),surface:bg};}
@@ -1878,6 +1880,7 @@ function p3dDados(){
       {v:av.length?av.reduce((s,p)=>s+p.avaliacao.nota,0)/av.length:0,t:'avaliação média ('+av.length+')',fmt:'nota'}
     ],
     cidades:CIDADES.map(c=>({rotulo:c,valor:peds.filter(p=>p.origem?.cidade===c).length})),
+    rotas:Object.values(peds.filter(p=>p.origem&&p.destino&&p.origem.cidade!==p.destino.cidade).reduce((m,p)=>{const k=p.origem.cidade+'|'+p.destino.cidade;(m[k]=m[k]||{de:p.origem.cidade,para:p.destino.cidade,n:0}).n++;return m;},{})),
     status:P3D_STATUS.map((s,i)=>({chave:s,rotulo:STATUS[s],valor:peds.filter(p=>p.status===s).length,slot:i})),
     dias,
     pendMot:mots.filter(m=>m.status==='pendente').length,
@@ -1893,7 +1896,7 @@ function adminPainel3d(){
   ${(d.pendMot||d.ocorr)?`<div class="acoes" style="margin-bottom:14px">${d.pendMot?`<button class="btn btn-faixa btn-sm" data-act="adm-aba" data-aba="motoristas">${d.pendMot} motorista(s) aguardando análise</button>`:''}${d.ocorr?`<button class="btn btn-faixa btn-sm" data-act="adm-aba" data-aba="ocorrencias">${d.ocorr} ocorrência(s) em aberto</button>`:''}</div>`:''}
   <div class="p3d-kpis">${d.kpis.map((k,i)=>`<div class="p3d-kpi" style="--i:${i}"><b data-p3d-num="${k.v}" data-fmt="${k.fmt||''}">${fmtKpi(k,P3D.visto?k.v:0)}</b><span>${esc(k.t)}</span></div>`).join('')}</div>
   <div class="p3d-grade">
-    <section class="p3d-card p3d-largo"><h3>Pedidos por cidade de coleta</h3><p class="small muted">Arraste para girar · passe o mouse sobre uma barra</p><div class="p3d-tela"><canvas data-p3d="barras" role="img" aria-label="Gráfico 3D de barras: ${esc(d.cidades.map(c=>c.rotulo+' '+c.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div></section>
+    <section class="p3d-card p3d-largo"><h3>Mapa de coletas</h3><p class="small muted">Um caminhão em cada cidade com coleta · arcos mostram as rotas entre cidades · arraste para girar</p><div class="p3d-tela"><canvas data-p3d="mapa" role="img" aria-label="Mapa 3D de coletas por cidade: ${esc(d.cidades.map(c=>c.rotulo+' '+c.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div></section>
     <section class="p3d-card"><h3>Pedidos por situação</h3><div class="p3d-tela"><canvas data-p3d="anel" role="img" aria-label="Anel 3D por situação: ${esc(d.status.filter(s=>s.valor).map(s=>s.rotulo+' '+s.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div>
       <ul class="p3d-legenda">${d.status.map(s=>`<li ${s.valor?'':'class="p3d-zero"'}><i style="background:var(--p3d-c${s.slot})"></i>${esc(s.rotulo)} <b>${s.valor}</b></li>`).join('')}</ul></section>
     <section class="p3d-card"><h3>Pedidos nos últimos 14 dias</h3><div class="p3d-tela"><canvas data-p3d="fita" role="img" aria-label="Fita 3D de pedidos por dia: ${esc(d.dias.map(x=>x.rotulo+' '+x.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div></section>
@@ -1921,6 +1924,34 @@ function p3dDesenhar(cena,t){
     // piso
     const piso=[[-n/2-.4,-1.1],[n/2+.4,-1.1],[n/2+.4,1.1],[-n/2-.4,1.1]].map(([x,z])=>p3dProj(cena,x,0,z));faces.push({pts:piso,z:99,cor:tema.escuro?'rgba(255,255,255,.04)':'rgba(0,0,0,.035)',linha:tema.linha});
     L.forEach((d,i)=>{const x=i-(n-1)/2,alt=Math.max(.04,d.valor/mx*2.6*g);p3dCaixa(faces,cena,x-.32,x+.32,-.32,.32,alt,tema.azul,d);const topo=p3dProj(cena,x,alt+.18,0),base=p3dProj(cena,x,0,-.95);rot.push({x:topo[0],y:topo[1],z:topo[2],txt:String(Math.round(d.valor*g)),forte:1},{x:base[0],y:base[1]+12,z:base[2],txt:d.rotulo.length>11?d.rotulo.slice(0,10)+'…':d.rotulo});});
+  } else if(cena.tipo==='mapa'){
+    Object.assign(cena,{cy:h*.54,esc:Math.min(w/10.5,h/7.4),tilt:.66,dist:16});
+    const P=(x,y,z)=>p3dProj(cena,x,y,z),quad=(pts,cor,z,extra)=>faces.push(Object.assign({pts,z:z??pts.reduce((s,p)=>s+p[2],0)/pts.length,cor},extra||{}));
+    // terreno estilizado e mar a leste
+    const terra=tema.escuro?'#22332b':'#dfe9dc',terraLado=tema.escuro?'#18241f':'#c6d6c2',mar=tema.escuro?'#173247':'#cfe3f3';
+    quad([P(-3.8,0,-3.2),P(2.6,0,-3.2),P(2.6,0,3.2),P(-3.8,0,3.2)],terra,60);
+    quad([P(-3.8,-.18,-3.2),P(2.6,-.18,-3.2),P(2.6,0,-3.2),P(-3.8,0,-3.2)],terraLado,59);
+    quad([P(2.6,-.06,-3.2),P(4,-.06,-3.2),P(4,-.06,3.2),P(2.6,-.06,3.2)],mar,61);
+    quad([P(2.6,-.18,-3.2),P(4,-.18,-3.2),P(4,-.06,-3.2),P(2.6,-.06,-3.2)],tema.escuro?'#10263a':'#b5d2ea',59.5);
+    const ondaT=performance.now()/1400;for(let k=0;k<4;k++){const zz=-2.6+k*1.6+Math.sin(ondaT+k)*.15,a=P(2.85,-.05,zz),b=P(3.7,-.05,zz+.35);rot.push({linhaMar:[a,b],z:58});}
+    const pos=P3D_CIDADES,mx=Math.max(1,...cena.dados.map(d=>d.valor));
+    // rotas (arcos tracejados animados)
+    cena.arcos=(cena.rotas||[]).filter(r=>pos[r.de]&&pos[r.para]).map(r=>{const A=pos[r.de],B=pos[r.para],pts=[];for(let k=0;k<=24;k++){const u=k/24;pts.push(P(A[0]+(B[0]-A[0])*u,Math.sin(Math.PI*u)*(.9+.15*r.n)*g,A[1]+(B[1]-A[1])*u));}return {pts,n:r.n};});
+    cena.dados.forEach(d=>{const [x,z]=pos[d.rotulo]||[0,0],tem=d.valor>0,corMarca=tem?tema.azul:(tema.escuro?'#5d6b66':'#9aa7a0');
+      p3dCaixa(faces,cena,x-.13,x+.13,z-.13,z+.13,.05,corMarca,d);
+      const lb=P(x,0,z-.42);rot.push({x:lb[0],y:lb[1]+12,z:lb[2]-5,txt:d.rotulo,forte:tem?1:0});
+      if(tem){ // caminhãozinho: chega do alto e balança de leve
+        const bob=Math.sin(performance.now()/380+x*3)*.025,y0=.05+(1-g)*2.2+bob,s=1.2+.3*d.valor/mx,cx=x,cz=z+.05;
+        const cab=tema.escuro?'#127A4E':'#0E6B44',bau='#F2B705',roda='#1c2124';
+        const caixa=(a,b,c,e,y1,y2,cor)=>{const v=(xx,yy,zz)=>P(xx,yy,zz),pts8=[v(a,y1,c),v(b,y1,c),v(b,y1,e),v(a,y1,e),v(a,y2,c),v(b,y2,c),v(b,y2,e),v(a,y2,e)];
+          [[4,5,6,7,.25],[0,1,5,4,-.05],[1,2,6,5,-.22],[2,3,7,6,-.12],[3,0,4,7,-.3]].forEach(([i1,i2,i3,i4,k])=>faces.push({pts:[pts8[i1],pts8[i2],pts8[i3],pts8[i4]],z:(pts8[i1][2]+pts8[i2][2]+pts8[i3][2]+pts8[i4][2])/4,cor:p3dCor(cor,k),dado:d}));};
+        caixa(cx-.34*s,cx+.1*s,cz-.15*s,cz+.15*s,y0+.07*s,y0+.38*s,bau);
+        caixa(cx+.12*s,cx+.3*s,cz-.14*s,cz+.14*s,y0+.07*s,y0+.27*s,cab);
+        caixa(cx+.2*s,cx+.29*s,cz-.13*s,cz+.13*s,y0+.19*s,y0+.25*s,tema.escuro?'#9fd6ff':'#bfe3ff');
+        [[-.26,-.16],[-.26,.12],[.16,-.16],[.16,.12]].forEach(([dx,dz])=>caixa(cx+dx*s,cx+(dx+.1)*s,cz+dz*s,cz+(dz+.04)*s,y0,y0+.09*s,roda));
+        const t2=P(cx,y0+.62*s,cz);rot.push({x:t2[0],y:t2[1],z:-90,txt:Math.round(d.valor*g)+(d.valor===1?' coleta':' coletas'),forte:1,selo:1});
+      }
+    });
   } else if(cena.tipo==='anel'){
     const L=cena.dados.filter(d=>d.valor),tot=L.reduce((s,d)=>s+d.valor,0)||1;Object.assign(cena,{cy:h*.52,esc:Math.min(w*.36,h*.62)/1.15,tilt:.72});
     let a0=-Math.PI/2;const r1=.62,r2=1.15,alt=.32;
@@ -1950,8 +1981,12 @@ function p3dDesenhar(cena,t){
   cena.faces=faces;
   for(const f of faces){ctx.beginPath();f.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=f.cor;ctx.fill();
     const foco=cena.foco&&f.dado===cena.foco;ctx.strokeStyle=f.linha||(foco?tema.texto:(f.borda||tema.surface));ctx.lineWidth=f.linha?1:(foco?1.5:(f.borda?1.3:.6));ctx.stroke();}
+  if(cena.arcos){const off=-(performance.now()/60)%14;ctx.save();ctx.setLineDash([6,8]);ctx.lineDashOffset=off;ctx.lineCap='round';
+    cena.arcos.forEach(a=>{ctx.beginPath();a.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.strokeStyle=tema.escuro?'rgba(242,183,5,.85)':'rgba(186,120,0,.85)';ctx.lineWidth=Math.min(4,1.5+a.n*.5);ctx.stroke();});ctx.restore();}
   ctx.textAlign='center';
-  rot.sort((a,b)=>b.z-a.z).forEach(r=>{ctx.font=(r.forte===2?'700 26px ':r.forte?'600 13px ':'12px ')+getComputedStyle(document.body).fontFamily;ctx.fillStyle=r.forte?tema.texto:tema.muted;ctx.fillText(r.txt,r.x,r.y);});
+  rot.filter(r=>r.linhaMar).forEach(r=>{ctx.beginPath();ctx.moveTo(r.linhaMar[0][0],r.linhaMar[0][1]);ctx.lineTo(r.linhaMar[1][0],r.linhaMar[1][1]);ctx.strokeStyle=tema.escuro?'rgba(255,255,255,.18)':'rgba(255,255,255,.8)';ctx.lineWidth=1.5;ctx.stroke();});
+  rot.filter(r=>r.selo).forEach(r=>{ctx.font='600 12px '+getComputedStyle(document.body).fontFamily;const wd=ctx.measureText(r.txt).width+14;ctx.fillStyle=tema.texto;ctx.beginPath();ctx.roundRect?ctx.roundRect(r.x-wd/2,r.y-15,wd,20,10):ctx.rect(r.x-wd/2,r.y-15,wd,20);ctx.fill();ctx.fillStyle=tema.surface;ctx.fillText(r.txt,r.x,r.y);});
+  rot.filter(r=>!r.linhaMar&&!r.selo).sort((a,b)=>b.z-a.z).forEach(r=>{ctx.font=(r.forte===2?'700 26px ':r.forte?'600 13px ':'12px ')+getComputedStyle(document.body).fontFamily;ctx.fillStyle=r.forte?tema.texto:tema.muted;ctx.fillText(r.txt,r.x,r.y);});
   if(cena.tipo==='fita'&&cena.foco){const p=cena.pontos.find(p=>p.d===cena.foco);if(p){ctx.strokeStyle=tema.muted;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,h*.92);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(p.x,p.y,5,0,7);ctx.fillStyle=tema.azul;ctx.fill();ctx.strokeStyle=tema.surface;ctx.lineWidth=2;ctx.stroke();}}
 }
 function p3dDentro(px,py,pts){let d=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const [xi,yi]=pts[i],[xj,yj]=pts[j];if((yi>py)!==(yj>py)&&px<(xj-xi)*(py-yi)/(yj-yi)+xi)d=!d;}return d;}
@@ -1971,7 +2006,7 @@ function p3dLoop(ts){
 function p3dIniciar(){
   const tela=$$('canvas[data-p3d]');if(!tela.length)return;
   const d=p3dDados();
-  P3D.cenas=tela.map(cv=>({cv,tipo:cv.dataset.p3d,dados:cv.dataset.p3d==='barras'?d.cidades:cv.dataset.p3d==='anel'?d.status:d.dias}));
+  P3D.cenas=tela.map(cv=>({cv,tipo:cv.dataset.p3d,rotas:d.rotas,dados:cv.dataset.p3d==='mapa'?d.cidades:cv.dataset.p3d==='barras'?d.cidades:cv.dataset.p3d==='anel'?d.status:d.dias}));
   const tema=p3dTema();const raiz=$('.p3d');if(raiz)tema.cat.forEach((c,i)=>raiz.style.setProperty('--p3d-c'+i,c));
   if(p3dReduz())P3D.visto=true;
   P3D.cenas.forEach(c=>{
@@ -1985,7 +2020,7 @@ function p3dIniciar(){
       if(c.tipo==='fita'&&c.pontos){let m=1e9;c.pontos.forEach(p=>{const dd=Math.abs(p.x-x);if(dd<m){m=dd;alvo=p.d;}});if(m>40)alvo=null;}
       else for(let i=(c.faces||[]).length-1;i>=0;i--){const f=c.faces[i];if(f.dado&&p3dDentro(x,y,f.pts)){alvo=f.dado;break;}}
       c.foco=alvo;
-      if(alvo){dica.hidden=false;dica.innerHTML=`<b>${esc(alvo.rotulo)}</b><br>${alvo.valor} ${alvo.valor===1?'pedido':'pedidos'}`;dica.style.left=Math.min(r.width-150,x+14)+'px';dica.style.top=Math.max(0,y-44)+'px';}else dica.hidden=true;
+      if(alvo){dica.hidden=false;dica.innerHTML=`<b>${esc(alvo.rotulo)}</b><br>${alvo.valor} ${c.tipo==='mapa'?(alvo.valor===1?'coleta':'coletas'):(alvo.valor===1?'pedido':'pedidos')}${c.tipo==='mapa'&&c.rotas?.length?'<br>'+c.rotas.filter(r=>r.de===alvo.rotulo).map(r=>'→ '+esc(r.para)+' ('+r.n+')').join('<br>'):''}`;dica.style.left=Math.min(r.width-150,x+14)+'px';dica.style.top=Math.max(0,y-44)+'px';}else dica.hidden=true;
     });
     cv.addEventListener('pointerleave',()=>{c.foco=null;c.arrastando=false;dica.hidden=true;});
   });
@@ -2003,7 +2038,7 @@ ACOES['p3d-girar']=el=>{P3D.estado.auto=!P3D.estado.auto||p3dReduz()?!P3D.estado
 .p3d-grade{display:grid;grid-template-columns:1fr 1fr;gap:16px}.p3d-largo{grid-column:1/-1}@media(max-width:860px){.p3d-grade{grid-template-columns:1fr}}
 .p3d-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px}
 .p3d-card h3{margin-bottom:2px}
-.p3d-tela{position:relative}.p3d-tela canvas{display:block;width:100%;height:280px;cursor:grab;touch-action:pan-y}.p3d-largo .p3d-tela canvas{height:340px}.p3d-tela canvas:active{cursor:grabbing}
+.p3d-tela{position:relative}.p3d-tela canvas{display:block;width:100%;height:280px;cursor:grab;touch-action:pan-y}.p3d-largo .p3d-tela canvas{height:420px}.p3d-tela canvas:active{cursor:grabbing}
 .p3d-dica{position:absolute;pointer-events:none;background:var(--text);color:var(--bg);padding:7px 10px;border-radius:5px;font-size:.85rem;line-height:1.35;white-space:nowrap;box-shadow:0 8px 18px -8px rgba(0,0,0,.5)}
 .p3d-legenda{list-style:none;padding:0;margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem;color:var(--muted)}
 .p3d-legenda i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}.p3d-legenda b{color:var(--text);font-weight:600}.p3d-legenda .p3d-zero{opacity:.5}`;
