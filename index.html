@@ -601,7 +601,7 @@ function mudarStatus(p, s){ p.status=s; p.historico=(p.historico||[]).concat([{s
 let VIEW = {nome:'inicio', param:null, q:{}};
 let pendente = false;
 const ESTATICAS = new Set(['inicio','pedir']);
-const UI = { adminAba:'indicadores', motAba:'disponiveis', pedidoCriado:null };
+const UI = { adminAba:'painel3d', motAba:'disponiveis', pedidoCriado:null };
 function lerHash(){
   let h = decodeURIComponent(location.hash.slice(1)) || 'inicio';
   if(h==='entrar')h=rotaPerfilSalvo();
@@ -627,6 +627,7 @@ function render(forcar){
   const fn = VIEWS[VIEW.nome] || VIEWS.inicio;
   $('#app').innerHTML = fn();
   aplicarFerramentasPerfil();
+  if(VIEW.nome==='admin'&&typeof p3dIniciar==='function') p3dIniciar();
   if(VIEW.nome==='pedir'){ rotaPedido=null; ++rotaSeq; ativarAutocompletar(); }
   $$('.nav a').forEach(a=>{ a.toggleAttribute('aria-current', a.dataset.nav===VIEW.nome); if(a.dataset.nav===VIEW.nome) a.setAttribute('aria-current','page'); });
   document.title = (TITULOS[VIEW.nome]||'Fretes Joinville') + ' | Fretes Joinville';
@@ -1033,11 +1034,11 @@ function telaMotoristaEntrada(){
 VIEWS.admin = () => {
   if(!Store.admin) return `<div class="wrap pagina"><div class="painel vazio"><strong>Área restrita</strong>O painel administrativo está disponível apenas para a equipe da plataforma.</div></div>`;
   if(!adminAutorizado) return telaAdminLogin();
-  const abas=[['indicadores','Indicadores'],['motoristas','Motoristas'],['clientes','Clientes'],['mensalidades','Mensalidades'],['pedidos','Pedidos'],['ocorrencias','Ocorrências'],['auditoria','Auditoria'],['config','Configurações']];
+  const abas=[['painel3d','Painel 3D'],['indicadores','Indicadores'],['motoristas','Motoristas'],['clientes','Clientes'],['mensalidades','Mensalidades'],['pedidos','Pedidos'],['ocorrencias','Ocorrências'],['auditoria','Auditoria'],['config','Configurações']];
   const pend = Store.lista('motoristas').filter(m=>m.status==='pendente').length;
   const oc = Store.lista('pedidos').reduce((s,p)=>s+(p.ocorrencias||[]).filter(o=>!o.resolvida).length,0);
   const rot = {motoristas: pend?` (${pend})`:'', ocorrencias: oc?` (${oc})`:''};
-  const corpo = ({indicadores:adminIndicadores, motoristas:adminMotoristas, clientes:adminClientes, mensalidades:adminMensalidades, pedidos:adminPedidos, ocorrencias:adminOcorrencias, auditoria:adminAuditoria, config:adminConfig}[UI.adminAba]||adminIndicadores)();
+  const corpo = ({painel3d:adminPainel3d, indicadores:adminIndicadores, motoristas:adminMotoristas, clientes:adminClientes, mensalidades:adminMensalidades, pedidos:adminPedidos, ocorrencias:adminOcorrencias, auditoria:adminAuditoria, config:adminConfig}[UI.adminAba]||adminPainel3d)();
   return `<div class="wrap pagina">
     <div class="pagina-topo"><h1>Administração</h1><button class="btn btn-linha btn-sm" data-act="sair-admin">Bloquear administração</button><p>Acompanhe o piloto, aprove motoristas e trate ocorrências.</p></div>
     <div class="abas" role="tablist">${abas.map(([k,t])=>`<button role="tab" aria-selected="${UI.adminAba===k}" data-act="adm-aba" data-aba="${k}">${esc(t+(rot[k]||''))}</button>`).join('')}</div>
@@ -1851,6 +1852,162 @@ function aplicarFerramentasPerfil(){
 VIEWS.acesso=()=>`<section class="wrap pagina"><div class="pagina-topo"><h1>Entrar no Fretes Joinville</h1><p>Escolha seu perfil e entre com sua senha individual.</p></div><div class="grade g3"><a class="painel btn btn-linha" href="#pedidos">Sou cliente</a><a class="painel btn btn-linha" href="#motorista">Sou motorista</a><a class="painel btn btn-linha" href="#admin">Administrador</a></div><p style="margin-top:22px"><a href="#inicio">Visitar a página inicial</a></p></section>`;
 TITULOS.acesso='Entrar no aplicativo';
 if((window.matchMedia('(display-mode:standalone)').matches||navigator.standalone===true)&&['','#inicio','#entrar'].includes(location.hash))location.hash='entrar';
+
+/* ---------- Painel 3D animado do administrador ---------- */
+// Desenhado em canvas, sem bibliotecas externas: funciona offline e no app instalado.
+const P3D_CAT={light:['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#6250d6','#e34948'],dark:['#3987e5','#d95926','#199e70','#c98500','#d55181','#0ca30c','#9085e9','#e66767']};
+const P3D_STATUS=['aberto','aguardando','confirmado','coleta','transporte','entregue','concluido','cancelado'];
+const P3D={cenas:[],raf:null,estado:{rot:-0.6,auto:true},visto:false};
+const p3dReduz=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+function p3dTema(){const cs=getComputedStyle(document.documentElement),bg=cs.getPropertyValue('--surface').trim()||'#fff';const m=bg.match(/^#?([0-9a-f]{6})$/i);let escuro=false;if(m){const n=parseInt(m[1],16);escuro=((n>>16&255)*.299+(n>>8&255)*.587+(n&255)*.114)<128;}
+  return {escuro,cat:escuro?P3D_CAT.dark:P3D_CAT.light,azul:escuro?'#3987e5':'#2a78d6',texto:cs.getPropertyValue('--text').trim(),muted:cs.getPropertyValue('--muted').trim(),linha:cs.getPropertyValue('--line').trim(),surface:bg};}
+function p3dDados(){
+  const peds=Store.lista('pedidos'),mots=Store.lista('motoristas');
+  const concl=peds.filter(p=>['entregue','concluido'].includes(p.status)),vol=concl.reduce((s,p)=>s+(Number(p.valor)||0),0);
+  const conv=peds.filter(p=>['confirmado','coleta','transporte','entregue','concluido'].includes(p.status)).length;
+  const av=peds.filter(p=>p.avaliacao);
+  const dias=[];const hoje=new Date();hoje.setHours(0,0,0,0);
+  for(let i=13;i>=0;i--){const d=new Date(hoje);d.setDate(d.getDate()-i);const ini=d.getTime(),fim=ini+864e5;dias.push({rotulo:d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}),valor:peds.filter(p=>p.criadoEm>=ini&&p.criadoEm<fim).length});}
+  return {
+    kpis:[
+      {v:peds.length,t:'pedidos recebidos'},
+      {v:concl.length,t:'fretes entregues ou concluídos'},
+      {v:vol,t:'volume transacionado',fmt:'brl'},
+      {v:mots.filter(m=>m.status==='aprovado').length,t:'motoristas aprovados'},
+      {v:peds.length?Math.round(conv/peds.length*100):0,t:'pedidos que viraram frete',fmt:'pct'},
+      {v:av.length?av.reduce((s,p)=>s+p.avaliacao.nota,0)/av.length:0,t:'avaliação média ('+av.length+')',fmt:'nota'}
+    ],
+    cidades:CIDADES.map(c=>({rotulo:c,valor:peds.filter(p=>p.origem?.cidade===c).length})),
+    status:P3D_STATUS.map((s,i)=>({chave:s,rotulo:STATUS[s],valor:peds.filter(p=>p.status===s).length,slot:i})),
+    dias,
+    pendMot:mots.filter(m=>m.status==='pendente').length,
+    ocorr:peds.reduce((s,p)=>s+(p.ocorrencias||[]).filter(o=>!o.resolvida).length,0)
+  };
+}
+function fmtKpi(k,v){if(k.fmt==='brl')return brl(v);if(k.fmt==='pct')return Math.round(v)+'%';if(k.fmt==='nota')return v?v.toFixed(1).replace('.',','):'—';return Math.round(v).toLocaleString('pt-BR');}
+function adminPainel3d(){
+  const d=p3dDados();
+  if(!d.kpis[0].v && !Store.lista('motoristas').length) return `<div class="painel vazio"><strong>Nenhum dado ainda</strong>O painel 3D ganha vida com os primeiros pedidos. Para conhecer, carregue dados de exemplo.<div style="margin-top:14px"><button class="btn" data-act="exemplos">Carregar dados de exemplo</button></div></div>`;
+  const tab=(titulo,linhas)=>`<table><thead><tr><th>${titulo}</th><th class="num">Pedidos</th></tr></thead><tbody>${linhas.map(l=>`<tr><td>${esc(l.rotulo)}</td><td class="num">${l.valor}</td></tr>`).join('')}</tbody></table>`;
+  return `<div class="p3d">
+  ${(d.pendMot||d.ocorr)?`<div class="acoes" style="margin-bottom:14px">${d.pendMot?`<button class="btn btn-faixa btn-sm" data-act="adm-aba" data-aba="motoristas">${d.pendMot} motorista(s) aguardando análise</button>`:''}${d.ocorr?`<button class="btn btn-faixa btn-sm" data-act="adm-aba" data-aba="ocorrencias">${d.ocorr} ocorrência(s) em aberto</button>`:''}</div>`:''}
+  <div class="p3d-kpis">${d.kpis.map((k,i)=>`<div class="p3d-kpi" style="--i:${i}"><b data-p3d-num="${k.v}" data-fmt="${k.fmt||''}">${fmtKpi(k,P3D.visto?k.v:0)}</b><span>${esc(k.t)}</span></div>`).join('')}</div>
+  <div class="p3d-grade">
+    <section class="p3d-card p3d-largo"><h3>Pedidos por cidade de coleta</h3><p class="small muted">Arraste para girar · passe o mouse sobre uma barra</p><div class="p3d-tela"><canvas data-p3d="barras" role="img" aria-label="Gráfico 3D de barras: ${esc(d.cidades.map(c=>c.rotulo+' '+c.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div></section>
+    <section class="p3d-card"><h3>Pedidos por situação</h3><div class="p3d-tela"><canvas data-p3d="anel" role="img" aria-label="Anel 3D por situação: ${esc(d.status.filter(s=>s.valor).map(s=>s.rotulo+' '+s.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div>
+      <ul class="p3d-legenda">${d.status.map(s=>`<li ${s.valor?'':'class="p3d-zero"'}><i style="background:var(--p3d-c${s.slot})"></i>${esc(s.rotulo)} <b>${s.valor}</b></li>`).join('')}</ul></section>
+    <section class="p3d-card"><h3>Pedidos nos últimos 14 dias</h3><div class="p3d-tela"><canvas data-p3d="fita" role="img" aria-label="Fita 3D de pedidos por dia: ${esc(d.dias.map(x=>x.rotulo+' '+x.valor).join(', '))}"></canvas><div class="p3d-dica" hidden></div></div></section>
+  </div>
+  <details class="painel" style="margin-top:16px"><summary>Ver dados em tabela</summary><div class="duas-col" style="margin-top:14px"><div class="tabela-wrap">${tab('Cidade de coleta',d.cidades)}</div><div class="tabela-wrap">${tab('Situação',d.status)}</div></div><div class="tabela-wrap" style="margin-top:14px">${tab('Dia',d.dias)}</div></details>
+  <div class="acoes" style="margin-top:14px"><button class="btn btn-linha btn-sm" data-act="p3d-girar">${P3D.estado.auto&&!p3dReduz()?'Pausar rotação':'Girar automaticamente'}</button><button class="btn btn-linha btn-sm" data-act="adm-aba" data-aba="indicadores">Ver indicadores detalhados</button></div>
+  </div>`;
+}
+/* Motor 3D mínimo: projeção em perspectiva + pintor (faces ordenadas por profundidade). */
+function p3dProj(cena,x,y,z){const r=P3D.estado.rot,t=cena.tilt,c=Math.cos(r),s=Math.sin(r);const x1=x*c-z*s,z1=x*s+z*c;const ct=Math.cos(t),st=Math.sin(t);const y2=y*ct+z1*st,z2=-y*st+z1*ct;const f=cena.dist/(cena.dist+z2);return [cena.cx+x1*cena.esc*f,cena.cy-y2*cena.esc*f,z2];}
+function p3dCor(hex,k){const n=parseInt(hex.slice(1),16);let r=n>>16&255,g=n>>8&255,b=n&255;if(k>=0){r+=(255-r)*k;g+=(255-g)*k;b+=(255-b)*k;}else{r*=1+k;g*=1+k;b*=1+k;}return `rgb(${r|0},${g|0},${b|0})`;}
+function p3dCaixa(faces,cena,x0,x1,z0,z1,h,cor,dado){
+  const P=(x,y,z)=>p3dProj(cena,x,y,z);
+  const v=[P(x0,0,z0),P(x1,0,z0),P(x1,0,z1),P(x0,0,z1),P(x0,h,z0),P(x1,h,z0),P(x1,h,z1),P(x0,h,z1)];
+  [[4,5,6,7,.25],[0,1,5,4,-.05],[1,2,6,5,-.22],[2,3,7,6,-.12],[3,0,4,7,-.3]].forEach(([a,b,c2,d,k])=>faces.push({pts:[v[a],v[b],v[c2],v[d]],z:(v[a][2]+v[b][2]+v[c2][2]+v[d][2])/4,cor:p3dCor(cor,k),dado}));
+}
+function p3dDesenhar(cena,t){
+  const cv=cena.cv,ctx=cv.getContext('2d'),dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  const tema=p3dTema(),g=t<1?1-Math.pow(1-t,3):1,faces=[],rot=[];
+  Object.assign(cena,{cx:w/2,dist:14,tilt:0.42});
+  if(cena.tipo==='barras'){
+    const L=cena.dados,n=L.length,mx=Math.max(1,...L.map(d=>d.valor));Object.assign(cena,{cy:h*.78,esc:Math.min(w/9.5,h/4.2)});
+    // piso
+    const piso=[[-n/2-.4,-1.1],[n/2+.4,-1.1],[n/2+.4,1.1],[-n/2-.4,1.1]].map(([x,z])=>p3dProj(cena,x,0,z));faces.push({pts:piso,z:99,cor:tema.escuro?'rgba(255,255,255,.04)':'rgba(0,0,0,.035)',linha:tema.linha});
+    L.forEach((d,i)=>{const x=i-(n-1)/2,alt=Math.max(.04,d.valor/mx*2.6*g);p3dCaixa(faces,cena,x-.32,x+.32,-.32,.32,alt,tema.azul,d);const topo=p3dProj(cena,x,alt+.18,0),base=p3dProj(cena,x,0,-.95);rot.push({x:topo[0],y:topo[1],z:topo[2],txt:String(Math.round(d.valor*g)),forte:1},{x:base[0],y:base[1]+12,z:base[2],txt:d.rotulo.length>11?d.rotulo.slice(0,10)+'…':d.rotulo});});
+  } else if(cena.tipo==='anel'){
+    const L=cena.dados.filter(d=>d.valor),tot=L.reduce((s,d)=>s+d.valor,0)||1;Object.assign(cena,{cy:h*.52,esc:Math.min(w*.36,h*.62)/1.15,tilt:.72});
+    let a0=-Math.PI/2;const r1=.62,r2=1.15,alt=.32;
+    L.forEach(d=>{const ang=d.valor/tot*Math.PI*2*g,passos=Math.max(3,Math.ceil(ang/0.12)),cor=tema.cat[d.slot];
+      for(let k=0;k<passos;k++){const A=a0+ang*k/passos+.012,B=a0+ang*(k+1)/passos-.012*(k===passos-1);
+        const pt=(r,a,y)=>p3dProj(cena,Math.cos(a)*r,y,Math.sin(a)*r);
+        const q=(pts,k2)=>{const c2=p3dCor(cor,k2);faces.push({pts,z:pts.reduce((s,p)=>s+p[2],0)/4,cor:c2,borda:c2,dado:d});};
+        q([pt(r1,A,alt),pt(r2,A,alt),pt(r2,B,alt),pt(r1,B,alt)],.18);
+        q([pt(r2,A,0),pt(r2,B,0),pt(r2,B,alt),pt(r2,A,alt)],-.18);
+        q([pt(r1,A,0),pt(r1,B,0),pt(r1,B,alt),pt(r1,A,alt)],-.32);}
+      a0+=ang;});
+    const c=p3dProj(cena,0,0,0);rot.push({x:c[0],y:c[1]-4,z:-99,txt:String(Math.round(tot*g)),forte:2},{x:c[0],y:c[1]+16,z:-99,txt:'pedidos'});
+  } else if(cena.tipo==='fita'){
+    const L=cena.dados,n=L.length,mx=Math.max(1,...L.map(d=>d.valor));Object.assign(cena,{cy:h*.72,esc:Math.min(w/8.2,h/3.4),tilt:.36});
+    const X=i=>(i-(n-1)/2)*.5,Y=v=>v/mx*2*g,D=.35;
+    for(let i=0;i<n-1;i++){const a=L[i],b=L[i+1],P=(x,y,z)=>p3dProj(cena,x,y,z);
+      faces.push({pts:[P(X(i),Y(a.valor),-D),P(X(i+1),Y(b.valor),-D),P(X(i+1),Y(b.valor),D),P(X(i),Y(a.valor),D)],cor:p3dCor(tema.azul,.2),dado:a,i});
+      faces.push({pts:[P(X(i),0,D),P(X(i+1),0,D),P(X(i+1),Y(b.valor),D),P(X(i),Y(a.valor),D)],cor:tema.escuro?'rgba(57,135,229,.42)':'rgba(42,120,214,.30)',dado:a,i});
+      faces.push({pts:[P(X(i),0,-D),P(X(i+1),0,-D),P(X(i+1),Y(b.valor),-D),P(X(i),Y(a.valor),-D)],cor:tema.escuro?'rgba(57,135,229,.22)':'rgba(42,120,214,.16)',dado:a,i});
+      faces[faces.length-1].z=faces[faces.length-2].z=faces[faces.length-3].z=null;}
+    faces.forEach(f=>{if(f.z==null)f.z=f.pts.reduce((s,p)=>s+p[2],0)/4;});
+    L.forEach((d,i)=>{if((n-1-i)%2===0){const p=p3dProj(cena,X(i),0,-D-.45);rot.push({x:p[0],y:p[1]+14,z:p[2],txt:d.rotulo});}});
+    const ult=L[n-1],pu=p3dProj(cena,X(n-1),Y(ult.valor)+.25,0);rot.push({x:pu[0],y:pu[1],z:-99,txt:String(ult.valor)+' hoje',forte:1});
+    cena.pontos=L.map((d,i)=>{const p=p3dProj(cena,X(i),Y(d.valor),-D);return {x:p[0],y:p[1],d};});
+  }
+  faces.sort((a,b)=>b.z-a.z);
+  cena.faces=faces;
+  for(const f of faces){ctx.beginPath();f.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fillStyle=f.cor;ctx.fill();
+    const foco=cena.foco&&f.dado===cena.foco;ctx.strokeStyle=f.linha||(foco?tema.texto:(f.borda||tema.surface));ctx.lineWidth=f.linha?1:(foco?1.5:(f.borda?1.3:.6));ctx.stroke();}
+  ctx.textAlign='center';
+  rot.sort((a,b)=>b.z-a.z).forEach(r=>{ctx.font=(r.forte===2?'700 26px ':r.forte?'600 13px ':'12px ')+getComputedStyle(document.body).fontFamily;ctx.fillStyle=r.forte?tema.texto:tema.muted;ctx.fillText(r.txt,r.x,r.y);});
+  if(cena.tipo==='fita'&&cena.foco){const p=cena.pontos.find(p=>p.d===cena.foco);if(p){ctx.strokeStyle=tema.muted;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x,h*.92);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(p.x,p.y,5,0,7);ctx.fillStyle=tema.azul;ctx.fill();ctx.strokeStyle=tema.surface;ctx.lineWidth=2;ctx.stroke();}}
+}
+function p3dDentro(px,py,pts){let d=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const [xi,yi]=pts[i],[xj,yj]=pts[j];if((yi>py)!==(yj>py)&&px<(xj-xi)*(py-yi)/(yj-yi)+xi)d=!d;}return d;}
+function p3dLoop(ts){
+  P3D.cenas=P3D.cenas.filter(c=>c.cv.isConnected);
+  if(!P3D.cenas.length){P3D.raf=null;return;}
+  if(!P3D.t0)P3D.t0=ts;
+  const t=P3D.visto?1:Math.min(1,(ts-P3D.t0)/1400);
+  const parado=P3D.cenas.some(c=>c.foco||c.arrastando);
+  if(P3D.estado.auto&&!p3dReduz()&&!parado)P3D.estado.rot+=0.0035;
+  P3D.cenas.forEach(c=>p3dDesenhar(c,t));
+  // contadores dos KPIs
+  if(!P3D.visto)$$('[data-p3d-num]').forEach(el=>{const k={fmt:el.dataset.fmt};el.textContent=fmtKpi(k,Number(el.dataset.p3dNum)*(1-Math.pow(1-t,3)));});
+  if(t>=1&&!P3D.visto){P3D.visto=true;}
+  P3D.raf=requestAnimationFrame(p3dLoop);
+}
+function p3dIniciar(){
+  const tela=$$('canvas[data-p3d]');if(!tela.length)return;
+  const d=p3dDados();
+  P3D.cenas=tela.map(cv=>({cv,tipo:cv.dataset.p3d,dados:cv.dataset.p3d==='barras'?d.cidades:cv.dataset.p3d==='anel'?d.status:d.dias}));
+  const tema=p3dTema();const raiz=$('.p3d');if(raiz)tema.cat.forEach((c,i)=>raiz.style.setProperty('--p3d-c'+i,c));
+  if(p3dReduz())P3D.visto=true;
+  P3D.cenas.forEach(c=>{
+    const cv=c.cv,dica=cv.parentElement.querySelector('.p3d-dica');let ult=null;
+    cv.addEventListener('pointerdown',e=>{c.arrastando=true;ult=e.clientX;cv.setPointerCapture(e.pointerId);});
+    cv.addEventListener('pointerup',()=>{c.arrastando=false;});
+    cv.addEventListener('pointermove',e=>{
+      const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+      if(c.arrastando){P3D.estado.rot+=(e.clientX-ult)*0.01;ult=e.clientX;dica.hidden=true;return;}
+      let alvo=null;
+      if(c.tipo==='fita'&&c.pontos){let m=1e9;c.pontos.forEach(p=>{const dd=Math.abs(p.x-x);if(dd<m){m=dd;alvo=p.d;}});if(m>40)alvo=null;}
+      else for(let i=(c.faces||[]).length-1;i>=0;i--){const f=c.faces[i];if(f.dado&&p3dDentro(x,y,f.pts)){alvo=f.dado;break;}}
+      c.foco=alvo;
+      if(alvo){dica.hidden=false;dica.innerHTML=`<b>${esc(alvo.rotulo)}</b><br>${alvo.valor} ${alvo.valor===1?'pedido':'pedidos'}`;dica.style.left=Math.min(r.width-150,x+14)+'px';dica.style.top=Math.max(0,y-44)+'px';}else dica.hidden=true;
+    });
+    cv.addEventListener('pointerleave',()=>{c.foco=null;c.arrastando=false;dica.hidden=true;});
+  });
+  if(!P3D.raf){P3D.t0=null;P3D.raf=requestAnimationFrame(p3dLoop);}
+}
+ACOES['p3d-girar']=el=>{P3D.estado.auto=!P3D.estado.auto||p3dReduz()?!P3D.estado.auto:false;el.textContent=P3D.estado.auto&&!p3dReduz()?'Pausar rotação':'Girar automaticamente';};
+(function(){const css=`
+.p3d-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;perspective:900px;margin-bottom:16px}
+@media(max-width:1000px){.p3d-kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:560px){.p3d-kpis{grid-template-columns:1fr 1fr}}
+.p3d-kpi{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;transform-style:preserve-3d;transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s;box-shadow:0 10px 22px -18px rgba(0,0,0,.6)}
+.p3d-kpi:hover{transform:rotateX(8deg) rotateY(-10deg) translateZ(12px);box-shadow:0 22px 30px -18px rgba(0,0,0,.55)}
+.p3d-kpi b{display:block;font:700 1.9rem/1.1 var(--f-display);font-variant-numeric:tabular-nums;color:var(--text)}
+.p3d-kpi span{font-size:.85rem;color:var(--muted)}
+@media(prefers-reduced-motion:no-preference){.p3d-kpi{animation:p3dEntra .7s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i)*70ms)}@keyframes p3dEntra{from{opacity:0;transform:rotateX(-40deg) translateY(16px)}to{opacity:1;transform:none}}}
+.p3d-grade{display:grid;grid-template-columns:1fr 1fr;gap:16px}.p3d-largo{grid-column:1/-1}@media(max-width:860px){.p3d-grade{grid-template-columns:1fr}}
+.p3d-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px}
+.p3d-card h3{margin-bottom:2px}
+.p3d-tela{position:relative}.p3d-tela canvas{display:block;width:100%;height:280px;cursor:grab;touch-action:pan-y}.p3d-largo .p3d-tela canvas{height:340px}.p3d-tela canvas:active{cursor:grabbing}
+.p3d-dica{position:absolute;pointer-events:none;background:var(--text);color:var(--bg);padding:7px 10px;border-radius:5px;font-size:.85rem;line-height:1.35;white-space:nowrap;box-shadow:0 8px 18px -8px rgba(0,0,0,.5)}
+.p3d-legenda{list-style:none;padding:0;margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem;color:var(--muted)}
+.p3d-legenda i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}.p3d-legenda b{color:var(--text);font-weight:600}.p3d-legenda .p3d-zero{opacity:.5}`;
+const s=document.createElement('style');s.textContent=css;document.head.appendChild(s);})();
 
 /* ---------- Filtros da aba Motoristas ---------- */
 UI.filtroMot={q:'',status:'',veiculo:'',cidade:'',categoria:'',docs:''};
